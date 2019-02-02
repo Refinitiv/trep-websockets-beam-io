@@ -56,7 +56,7 @@
         <!-- Removing this property will not add a PubSub publish step to the pipeline -->
         <!-- <property name="pubSub"      value="projects/YOUR GCP PROJECT NAME/topics/TOPIC TO PUBLISH TO" />  -->
                
-        <!-- Table is create never and append. Removing this property will not add a BigQuery write step to the pipeline -->
+        <!-- Table is create if needed and append. Removing this property will not add a BigQuery write step to the pipeline -->
         <!-- DATASET must exit! -->
         <property name="bigQuery" value="YOUR GCP PROJECT NAME:DATASET.TABLE" />
         

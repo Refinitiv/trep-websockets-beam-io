@@ -31,8 +31,8 @@ This is governed by the same Apache 2 open source license as defined in the LICE
 # Contributing
 In the event you would like to contribute to this repository, it is required that you read and sign the following:
 
-- [Individual Contributor License Agreement](https://github.com/thomsonreuters/websocket-api/blob/master/Elektron%20API%20Individual%20Contributor%20License%20Agreement.pdf)
-- [Entity Contributor License Agreement](https://github.com/thomsonreuters/websocket-api/blob/master/Elektron%20API%20Entity%20Contributor%20License%20Agreement.pdf)
+- [Individual Contributor License Agreement](https://github.com/Refinitiv/trep-websockets-beam-io/blob/master/Individual%20Contributor%20License%20Agreement%20v1.docx)
+- [Entity Contributor License Agreement](https://github.com/Refinitiv/trep-websockets-beam-io/blob/master/Entity%20Contributor%20License%20Agreement%20v1.1.docx)
 
 Please email a signed and scanned copy to `sdkagreement@thomsonreuters.com`.  If you require that a signed agreement has to be physically mailed to us, please email the request for a mailing address and we will get back to you on where you can send the signed documents.
 
