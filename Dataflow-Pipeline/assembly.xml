@@ -28,11 +28,11 @@
             <directory>log</directory>
             <outputDirectory>/log</outputDirectory>
             <excludes>
-                <exclude>**/*.log</exclude>
+                <exclude>**/dataflow.log.*</exclude>
                 <exclude>**/*.jar</exclude>
             </excludes>
         </fileSet>
-        
+
         <fileSet>
             <directory>${project.build.directory}</directory>
             <outputDirectory>/</outputDirectory>

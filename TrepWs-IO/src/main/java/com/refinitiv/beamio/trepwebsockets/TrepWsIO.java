@@ -1,12 +1,12 @@
 /*
  * Copyright Refinitiv 2018
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,7 +23,6 @@ import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.C
 import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.ERROR;
 import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.LOGIN;
 import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.STATUS;
-
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.Inet4Address;
@@ -31,10 +30,14 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 import javax.websocket.ClientEndpointConfig;
@@ -57,33 +60,57 @@ import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.display.DisplayData;
 import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.ssl.SSLContextBuilder;
+import org.apache.http.util.EntityUtils;
 import org.joda.time.Instant;
+import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.refinitiv.beamio.trepwebsockets.json.MarketPrice;
+import com.refinitiv.beamio.trepwebsockets.json.Services;
+
+import avro.shaded.com.google.common.collect.Maps;
 
 @SuppressWarnings("serial")
 @Experimental(Experimental.Kind.SOURCE_SINK)
 public class TrepWsIO {
-	
-	private static final Logger LOG = LoggerFactory.getLogger(TrepWsIO.class);
-	
+
+    private static final Logger LOG = LoggerFactory.getLogger(TrepWsIO.class);
+    private static final String FIELDS = "Fields";
+
     private static Counter      messages  = Metrics.counter(TrepWsIO.class, "Messages");
     private static Counter      records   = Metrics.counter(TrepWsIO.class, "Records");
     private static Counter      status    = Metrics.counter(TrepWsIO.class, "Status Messages");
     private static Distribution queueSize = Metrics.distribution(TrepWsIO.class, "Queue ");
 
-	  /**
+      /**
      * <h3>Reading from a websocket TREP/ADS</h3>
-     * 
+     *
      * <p>
      * TrepWsIO source returns unbounded collection of
      * {@code PCollection<MarketPriceMessage>} messages. A MarketPriceMessage
@@ -101,342 +128,556 @@ public class TrepWsIO {
      * <li>an <code>Instant</code> <b>timestamp</b> (the message receive time)</li>
      * <li>the <code>String</code> raw <b>jsonString</b> received from the ADS</li>
      * </ul>
-     * 
+     *
      * <p>
      * WebSocket is a standard communication protocol built on top of TCP
      * connection. The WebSocket protocol enables streams of messages between the
      * ADS and this Beam Source.
-     * 
+     *
      * <p>
      * The wire protocol used over the WebSocket connection is Thomson Reuters
      * Simplified JSON, which is also referred as WebSocket API. The WebSocket API
      * is an abstract interface between ADS and WebSocket clients communicating with
      * the simplified JSON messages.
-     * 
+     *
      * <p>
      * Currently, the ADS supports the size of the WebSocket frame up to 60k bytes.
      * If the ADS receives any JSON message larger than that, the WebSocket channel
      * will be disconnected.
-     * 
+     *
      * <p>
-     * This source will split into <i>n</i> parts which is the minimum of desiredNumSplits
-     * and the getMaxMounts parameter. Note the default getMaxMounts is 1. The
-     * watchlist sent to each ADS mount is derived by extracting each RIC from the
-     * InstrumentTuples and distributing them in round robin order.
+     * This source will split into <i>n</i> parts which is the minimum of
+     * desiredNumSplits and the getMaxMounts parameter. Note the default
+     * getMaxMounts is 1. The watchlist sent to each ADS mount is derived by
+     * extracting each RIC from the InstrumentTuples and distributing them in round
+     * robin order.
      * <p>
      * This source does not process checkpoint marks, but does record sequence
      * numbers and timestamps for watermarking.
-     * 
+     *
      * <p>
-     * To configure a TREP Websocket source, you must specify at the minimum ADS
-     * hostname, DACS username and a list of instrument tuples. For example:
-     * 
+     * The TrepWsIO now supports connections to both an ADS and the Elektron
+     * Real-Time Service both using the Websocket API.
+     * <p>
+     * To configure a TREP Websocket source, you must specify at the minimum
+     * hostname, username and a list of instrument tuples.
+     * <p>
+     * If connecting to ERT then withTokenAuth(true) and a password must also be
+     * specified. Additionally if withServiceDiscovery(true) and .withRegion("eu")
+     * are set the TrepWsIO will discover and connect to services in that region.
+     *
      * <pre>
      * {@code
-     * 
+     *
      * // Firstly create any number instrument tuples of Service, RIC list and Field list
-     * //   Service can be null, in which case the default ADS Service will be used
-     * //   RIC list cannot be null
-     * //   Fields can be null, in which case field filtering (a View) will not apply
-     * 
-     * InstrumentTuple instrument1 = InstrumentTuple.of(
-     *   "IDN_RDF", 
-     *   Lists.newArrayList("EUR=","JPY="),
-     *   Lists.newArrayList("BID","ASK"));
-     *   
-     * InstrumentTuple instrument2 = InstrumentTuple.of(
-     *   null, 
-     *   Lists.newArrayList("MSFT.O","IBM.N"),  
-     *   null);
-     *	
-     * PCollection<MarketPriceMessage> messages = 
-     *   pipeline.apply(TrepWsIO.read()
-     *    .withHostname("websocket-ads") // ADS hostname
-     *    .withUsername("user")          // DACS username
-     *    .withInstrumentTuples(Lists.newArrayList(instrument1, instrument2))
-     *    // Above three are required configuration
-     *				
-     *    // Rest of the settings are optional:
-     *    
-     *    // ADS websocket port, if unset 15000 is used
-     *    .withPort(15000) 
-     *    
-     *    // The maximum number of ADS mounts (overridden if the number of 
-     *    // desired splits is smaller). If unset then 1 is used
-     *    .withMaxMounts(4)
-     * 
-     *    // The DACS position, if unset the IP address of the local host is used
-     *    .withPosition("192.168.1.104")
-     *    
-     *    // The DACS application ID, if unset 256 is used
-     *    .withAppId("123")
-     *				
-     *    // The wesocket MaxSessionIdleTimeout in milliSeconds. 
-     *    // Note: this must be greater that 6000 (twice the ping timeout)
-     *    .withTimeout(60000)
-     *			
-     *   );
-     *   
-     *   messages.apply(....) // PCollection<MarketPriceMessage>
-     * }
+     * // Service can be null, in which case the default ADS Service will be used
+     * // RIC list cannot be null
+     * // Fields can be null, in which case field filtering (a View) will not apply
+     *
+     *     InstrumentTuple instrument1 = InstrumentTuple.of(
+     *       "IDN_RDF",
+     *       Lists.newArrayList("EUR=","JPY="),
+     *       Lists.newArrayList("BID","ASK"));
+
+     *     InstrumentTuple instrument2 = InstrumentTuple.of(
+     *       null,
+     *       Lists.newArrayList("MSFT.O","IBM.N"),
+     *       null);
+     *
+     *     PCollection<MarketPriceMessage> messages =
+     *       pipeline.apply(TrepWsIO.read()
+     *        .withHostname("websocket-ads") // hostname
+     *        .withUsername("user")          // username
+     *
+     *        // For ERT
+     *        .withTokenAuth(true)
+     *        .withPassword("ert-password")
+     *        .withServiceDiscovery(true)
+     *        .withRegion("eu")
+     *
+     *        .withInstrumentTuples(Lists.newArrayList(instrument1, instrument2))
+     *
+     *        // Rest of the settings are optional:
+     *
+     *        // Cache these fields values and populate in every update
+     *        .withCachedFields(Sets.newHashSet("PROD_PERM","CONTR_MNTH"))
+     *
+     *        // ADS websocket port, if unset 15000 is used
+     *        .withPort(15000)
+     *
+     *        // The maximum number of ADS mounts (overridden if the number of
+     *        // desired splits is smaller). If unset then 1 is used.
+     *        // NOTE: for ERT maxMounts is forced to 1 to avoid clashes then performing token authentication.
+     *        .withMaxMounts(1)
+     *
+     *        // The DACS position, if unset the IP address of the local host is used
+     *        .withPosition("192.168.1.104")
+     *
+     *        // The DACS application ID, if unset 256 is used
+     *       .withAppId("123")
+     *
+     *        // The wesocket MaxSessionIdleTimeout in milliSeconds.
+     *        // Note: this must be greater that 6000 (twice the ping timeout)
+     *        .withTimeout(60000)
+     *
+     *        // For ERT to override the defaults for authentication server/port/path and discovery path
+     *       .setAuthServer("api.edp.thomsonreuters.com")
+     *       .setAuthPort(443)
+     *       .setTokenAuthPath("/auth/oauth2/beta1/token")
+     *       .setDiscoveryPath("/streaming/pricing/v1/")
+     *
+     *       );
+     *
+     *       messages.apply(....) // PCollection<MarketPriceMessage>
+     *     }
      * </pre>
      */
-	public static Read<MarketPriceMessage> read() {
-		return new AutoValue_TrepWsIO_Read.Builder<MarketPriceMessage>()
-				.setMaxNumRecords(Long.MAX_VALUE)
-				.setPort(15000)
-				.setAppId("256")
-				.setTimeout(60000)
-				.setMaxMounts(1)
-				.setCoder(SerializableCoder.of(MarketPriceMessage.class))
-				.setMessageMapper(
-					(MessageMapper<MarketPriceMessage>)
-					new MessageMapper<MarketPriceMessage>() {
+    public static Read<MarketPriceMessage> read() {
 
-					    @Override
-					    public MarketPriceMessage mapMessage(MarketPrice message) {
-					        return new MarketPriceMessage(
-			                        message.getID(),
-			                        message.getType(),
-			                        message.getUpdateType(), 
-			                        message.getSeqNumber(),
-			                        message.getKey().getName(),
-			                        message.getKey().getService(),
-			                        message.getFields(),
-			                        message.getJsonString());	
-						}
-					})
-				.build();
-	}
-	
-	  /**
+        return new AutoValue_TrepWsIO_Read.Builder<MarketPriceMessage>()
+                .setMaxNumRecords(Long.MAX_VALUE)
+                .setPort(15000)
+                .setTokenAuth(false)
+                .setServiceDiscovery(false)
+                .setRegion("us")
+                .setAuthServer("api.edp.thomsonreuters.com")
+                .setAuthPort(443)
+                .setTokenAuthPath("/auth/oauth2/beta1/token")
+                .setDiscoveryPath("/streaming/pricing/v1/")
+                .setAppId("256")
+                .setTimeout(60000)
+                .setMaxMounts(1)
+                .setCoder(SerializableCoder.of(MarketPriceMessage.class))
+                .setMessageMapper(
+                        (MessageMapper<MarketPriceMessage>)
+                        new MessageMapper<MarketPriceMessage>() {
+
+                            @Override
+                            public MarketPriceMessage mapMessage(ConcurrentHashMap<String, LoadingCache<String, String>> cache,
+                                    MarketPrice message,
+                                    Set<String> cachedFields) {
+
+                                String jsonString = StringUtils.defaultIfBlank(jsonString = message.getJsonString(),"{}");
+
+                                Map<String,String> fields = cacheAdd(cache, message.getKey().getName(), message.getFields(), cachedFields);
+
+                                try {
+                                    if (cachedFields != null && !cachedFields.isEmpty()) {
+                                        jsonString = new JSONObject(message.getJsonString()).put(FIELDS, fields).toString();
+                                    }
+                                } catch (Exception e) {
+                                    LOG.error("ERROR: updating json string {}",
+                                        String.format("msg:%s json:%s fields:%s", message.getJsonString(),
+                                            jsonString, fields),e);
+                                }
+
+                                MarketPriceMessage mp =  new MarketPriceMessage(
+                                        message.getID(),
+                                        message.getType(),
+                                        message.getUpdateType(),
+                                        message.getSeqNumber(),
+                                        message.getKey().getName(),
+                                        message.getKey().getService(),
+                                        fields,
+                                        jsonString,
+                                        message.getTimestamp());
+                                return mp;
+                            }
+
+                            private Map<String, String> cacheAdd(
+                                    ConcurrentHashMap<String, LoadingCache<String, String>> cache, String ric,
+                                    Map<String, String> fields, Set<String> cachedFields) {
+
+                                if (cachedFields == null || cachedFields.isEmpty())
+                                    return fields;
+
+                                Map<String, String> fieldz = Maps.newLinkedHashMap(fields);
+
+                                if (!cache.containsKey(ric)) {
+                                    cache.put(ric, initCache());
+                                }
+
+                                fields.entrySet().stream()
+                                .filter(e -> cachedFields.contains(e.getKey()))
+                                .filter(e -> e.getValue() != null)
+                                .forEach(f -> cache.get(ric).put(f.getKey(), f.getValue()));
+
+                                fieldz.putAll(cache.get(ric).asMap());
+
+                                return fieldz;
+                            }
+
+                            private LoadingCache<String, String> initCache() {
+                                return CacheBuilder.newBuilder().build(new CacheLoader<String, String>() {
+                                    @Override
+                                    public String load(String key) throws Exception {
+                                        return key;
+                                    }
+                                });
+                            }
+                        })
+                .build();
+    }
+
+      /**
      * <p>An Instrument Tuple of Service, Instrument list and Field list.
      * <ul>
      * <li>Service can be null, in which case the default ADS Service will be used
      * <li>RIC list cannot be null
      * <li>Fields can be null, in which case field filtering (a View) will not apply
+     * <li>PE can be null
      * <br><br>
-     * 
+     *
      * @param service
      * @param instruments
      * @param fields
      * @return InstrumentTuple
      */
-	@AutoValue
-	public abstract static class InstrumentTuple implements Serializable {
-		public static InstrumentTuple of(String service, List<String> instruments, List<String> fields) {
-			return new AutoValue_TrepWsIO_InstrumentTuple(service, instruments, fields);
-	  }
-	  
-	  /** TREP Service Name */
-	  @Nullable
-	  public abstract String getService();
-	  
-	  /** TREP Instrument List 
-	   * <p>Cannot be null 
-	   */
-	  public abstract List<String> getInstruments(); 
+    @AutoValue
+    public abstract static class InstrumentTuple implements Serializable {
+    public static InstrumentTuple of(String service, List<String> instruments, List<String> fields) {
+        return new AutoValue_TrepWsIO_InstrumentTuple(service, instruments, fields);
+    }
 
-	  /** TREP Field List */
-	  @Nullable
-	  public abstract List<String> getFields();
-	}
-	
-	@AutoValue
-	public abstract static class Read<T> extends PTransform<PBegin, PCollection<T>> {
+    /** TREP Service Name */
+    @Nullable
+    public abstract String getService();
+
+    /** TREP Instrument List
+     * <p>Cannot be null
+     */
+    public abstract List<String> getInstruments();
+
+    /** TREP Field List */
+    @Nullable
+    public abstract List<String> getFields();
+
+    }
+
+    @AutoValue
+    public abstract static class Read<T> extends PTransform<PBegin, PCollection<T>> {
 
         @Nullable
-		abstract String getHostname();
+        abstract String getHostname();
 
-		abstract int getPort();
+        abstract int getPort();
 
-		@Nullable
-		abstract String getUsername();
+        abstract boolean getTokenAuth();
 
-		@Nullable
-		abstract String getPosition();
+        @Nullable
+        abstract String getRegion();
 
-		@Nullable
-		abstract String getAppId();	
-		
-		@Nullable
-		abstract List<InstrumentTuple> getInstrumentTuples();
- 
-		abstract long getMaxNumRecords();
-		
-		abstract int  getTimeout();
-		
-		abstract int  getMaxMounts();
+        @Nullable
+        abstract String getAuthServer();
 
-	    @Nullable
-	    abstract MessageMapper<T> getMessageMapper();
-	    
-		@Nullable
-		abstract Coder<T> getCoder();
-		
-		abstract Builder<T> builder();
+        abstract int getAuthPort();
 
-		@AutoValue.Builder
-		abstract static class Builder<T> {	 
- 
-			abstract Builder<T> setHostname(String hostname);
+        abstract boolean getServiceDiscovery();
 
-			abstract Builder<T> setPort(int port);
+        @Nullable
+        abstract String getTokenAuthPath();
 
-			abstract Builder<T> setUsername(String username);
+        @Nullable
+        abstract String getDiscoveryPath();
 
-			abstract Builder<T> setPosition(String position);
+        @Nullable
+        abstract String getUsername();
 
-			abstract Builder<T> setAppId(String appId);
-						
-			abstract Builder<T> setMaxNumRecords(long maxNumRecords);
-			
-			abstract Builder<T> setTimeout(int timeout);
-			
-			abstract Builder<T> setMaxMounts(int maxMounts);
-			
-			abstract Builder<T> setMessageMapper(MessageMapper<T> messageMapper);
+        @Nullable
+        abstract String getPassword();
 
-			abstract Builder<T> setCoder(Coder<T> coder);
-			
-			abstract Builder<T> setInstrumentTuples(List<InstrumentTuple> instrumentTuples);
-						
-			abstract Read<T> build();
-		}
+        @Nullable
+        abstract String getPosition();
 
-		/**
-		 * <p>Specifies a java.util.List of InstrumentTuples to request from the ADS.
-		 * <p>A tuple is made up of a Service name, Instrument (RIC) list and Field list.
-		 * <ul><li>If the Service name is null, the default ADS Service name will be used. 
-		 * <li>The Instrument list cannot be null.<br>
-		 * <li>If the Field list is null, Field filtering will not apply.
-		 * <br><br>
-		 * @param instrumentTuples
-		 */
-		public Read<T> withInstrumentTuples(List<InstrumentTuple> instrumentTuples) {
-			checkArgument(instrumentTuples != null, "instrumentTuples can not be null");
-			checkArgument(!instrumentTuples.isEmpty(), "instrumentTuples list can not be empty");
-			return builder().setInstrumentTuples(instrumentTuples).build();
-		}
-		
-		/**
-		 * Specifies the hostname where the ADS is running.
-		 * @param hostname
-		 */
-		public Read<T> withHostname(String hostname) {
-			checkArgument(hostname != null, "hostname can not be null");
-			return builder().setHostname(hostname).build();
-		}
-		/**
-		 * Specifies the port number on which the ADS is listening for Websocket connections.
-		 * @param port
-		 */
-		public Read<T> withPort(int port) {
-			return builder().setPort(port).build();
-		}
+        @Nullable
+        abstract String getAppId();
 
-		/**
-		 * Specifies the DACS username used when connecting to the ADS.
-		 * @param username
-		 */
-		public Read<T> withUsername(String username) {
-			checkArgument(username != null, "username can not be null");
-			return builder().setUsername(username).build();
-		}
+        @Nullable
+        abstract List<InstrumentTuple> getInstrumentTuples();
 
-		/**
-		 * Specifies the DACS position parameter.<br>
-		 * If unset the  address of the local host is used. 
-		 * This is achieved by retrieving the name of the host from the system, 
-		 * then resolving that name into an InetAddress.
-		 * @param appId
-		 */
-		public Read<T> withPosition(String position) {
-			checkArgument(position != null, "position can not be null");
-			return builder().setPosition(position).build();
-		}
+        abstract long getMaxNumRecords();
 
-		/**
-		 * Specifies the DACS Application Id parameter.
-		 * @param appId
-		 */
-		public Read<T> withAppId(String appId) {
-			checkArgument(appId != null, "appId can not be null");
-			return builder().setAppId(appId).build();
-		}
-		
-		/**
-		 * <p>Specifies the Websocket timeout in MilliSeconds. 
-		 * <p>This must be >= 60000mS (twice ping timeout)
-		 * @param timeout
-		 */
-		public Read<T> withTimeout(int timeout) {
-			checkArgument(timeout >= 60000, "timeout must be > 60000 (larger than ping timer x2), but was: %s", timeout);
-			return builder().setTimeout(timeout).build();
-		}
+        abstract int  getTimeout();
 
-		/**
-		 * <p>Specified the maximum number of ADS mounts
-		 * @param maxMounts
-		 */
-		public Read<T> withMaxMounts(int maxMounts) {
-		    return builder().setMaxMounts(maxMounts).build();
-		}
-		/**
-		 * When set to less than {@code Long.MAX_VALUE} act as a Bounded Source. Used for testing.
-		 * @param maxNumRecords
-		 */
-		public Read<T> withMaxNumRecords(long maxNumRecords) {
-			checkArgument(maxNumRecords >= 0, "maxNumRecords must be > 0, but was: %s", maxNumRecords);
-			return builder().setMaxNumRecords(maxNumRecords).build();
-		}
-		
-		/**
-		 * Specifies the MarketPriceMessage coder.
-		 * @param coder
-		 */
-		public Read<T> withCoder(Coder<T> coder) {
-			checkArgument(coder != null, "coder can not be null");
-			return builder().setCoder(coder).build();
-		}
+        abstract int  getMaxMounts();
 
-		@Override
-		public PCollection<T> expand(PBegin input) {
-			
-			checkArgument(getHostname() != null, "withHostname() is required");
-			checkArgument(getUsername() != null, "withUsername() is required");
-			checkArgument(getInstrumentTuples() != null, "withInstrumentTuples() is required");
-			
-			// Handles unbounded source to bounded conversion if maxNumRecords is set.
-			Unbounded<T> unbounded = org.apache.beam.sdk.io.Read.from(createSource());
+        @Nullable
+        abstract MessageMapper<T> getMessageMapper();
 
-			PTransform<PBegin, PCollection<T>> transform = unbounded;
+        @Nullable
+        abstract Coder<T> getCoder();
 
-			if (getMaxNumRecords() < Long.MAX_VALUE) {
-				transform = unbounded.withMaxNumRecords(getMaxNumRecords());
-			}
-			
-			return input.getPipeline().apply(transform);
-		}
+        @Nullable
+        abstract Set<String> getCachedFields();
 
-		@Override
-		public void populateDisplayData(DisplayData.Builder builder) {
-			super.populateDisplayData(builder);
-			builder.addIfNotNull(DisplayData.item("hostname", getHostname()));
-			builder.addIfNotNull(DisplayData.item("port",     getPort()));
-			builder.addIfNotNull(DisplayData.item("username", getUsername()));
-			builder.addIfNotNull(DisplayData.item("position", getPosition()));
-			builder.addIfNotNull(DisplayData.item("appid",    getAppId()));
-		}
+        abstract Builder<T> builder();
+
+        @AutoValue.Builder
+        abstract static class Builder<T> {
+
+            abstract Builder<T> setHostname(String hostname);
+
+            abstract Builder<T> setPort(int port);
+
+            abstract Builder<T> setTokenAuth(boolean token);
+
+            abstract Builder<T> setRegion(String region);
+
+            abstract Builder<T> setAuthServer(String authServer);
+
+            abstract Builder<T> setAuthPort(int authPort);
+
+            abstract Builder<T> setServiceDiscovery(boolean discovery);
+
+            abstract Builder<T> setTokenAuthPath(String authPath);
+
+            abstract Builder<T> setDiscoveryPath(String discoveryPath);
+
+            abstract Builder<T> setUsername(String username);
+
+            abstract Builder<T> setPassword(String password);
+
+            abstract Builder<T> setPosition(String position);
+
+            abstract Builder<T> setAppId(String appId);
+
+            abstract Builder<T> setMaxNumRecords(long maxNumRecords);
+
+            abstract Builder<T> setTimeout(int timeout);
+
+            abstract Builder<T> setMaxMounts(int maxMounts);
+
+            abstract Builder<T> setMessageMapper(MessageMapper<T> messageMapper);
+
+            abstract Builder<T> setCoder(Coder<T> coder);
+
+            abstract Builder<T> setInstrumentTuples(List<InstrumentTuple> instrumentTuples);
+
+            abstract Builder<T> setCachedFields(Set<String> cachedFields);
+
+            abstract Read<T> build();
+        }
+
+        /**
+         * <p>Specifies a java.util.List of InstrumentTuples to request from the ADS.
+         * <p>A tuple is made up of a Service name, Instrument (RIC) list and Field list.
+         * <ul><li>If the Service name is null, the default ADS Service name will be used.
+         * <li>The Instrument list cannot be null.<br>
+         * <li>If the Field list is null, Field filtering will not apply.
+         * <br><br>
+         * @param instrumentTuples
+         */
+        public Read<T> withInstrumentTuples(List<InstrumentTuple> instrumentTuples) {
+            checkArgument(instrumentTuples != null, "instrumentTuples cannot be null");
+            checkArgument(!instrumentTuples.isEmpty(), "instrumentTuples list cannot be empty");
+            return builder().setInstrumentTuples(instrumentTuples).build();
+        }
+
+        /**
+         * Specifies the hostname where the ADS is running.
+         * @param hostname
+         */
+        public Read<T> withHostname(String hostname) {
+            return builder().setHostname(hostname).build();
+        }
+
+        /**
+         * Specifies the region selected when performing ERT service discovery.
+         * @param region
+         * @return
+         */
+        public Read<T> withRegion(String region) {
+            checkArgument(region != null, "region cannot be null");
+            return builder().setRegion(region).build();
+        }
+
+        /**
+         * Specifies the port number on which the ADS is listening for Websocket connections.
+         * @param port
+         */
+        public Read<T> withPort(int port) {
+            return builder().setPort(port).build();
+        }
+
+        /**
+         * Specifies whether to use ERT token authentication.
+         * @param tokenAuth
+         * @return
+         */
+        public Read<T> withTokenAuth(boolean tokenAuth) {
+            return builder().setTokenAuth(tokenAuth).build();
+        }
+
+        /**
+         * Specifies the ERT token authentication server.
+         * @param authServer
+         * @return
+         */
+        public Read<T> withAuthServer(String authServer) {
+            checkArgument(authServer != null, "authServer cannot be null");
+            return builder().setUsername(authServer).build();
+        }
+
+        /**
+         * Specifies the token authentication server port.
+         * @param authPort
+         * @return
+         */
+        public Read<T> withAuthPort(int authPort) {
+            return builder().setAuthPort(authPort).build();
+        }
+
+        /**
+         * Specifies whether to use ERT service discovery to find endpoints.
+         * @param discovery
+         * @return
+         */
+        public Read<T> withServiceDiscovery(boolean discovery) {
+            return builder().setServiceDiscovery(discovery).build();
+        }
+
+        /**
+         * Specifies the token authentication server path.
+         * @param authPath
+         * @return
+         */
+        public Read<T> withTokenAuthPath(String authPath) {
+            checkArgument(authPath != null, "authPath cannot be null");
+            return builder().setTokenAuthPath(authPath).build();
+        }
+
+        /**
+         * Specifies the service discovery server path.
+         * @param discoveryPath
+         * @return
+         */
+        public Read<T> withDiscoveryPath(String discoveryPath) {
+            checkArgument(discoveryPath != null, "discoveryPath cannot be null");
+            return builder().setDiscoveryPath(discoveryPath).build();
+        }
+
+        /**
+         * Specifies the DACS/ERT username used when connecting.
+         * @param username
+         */
+        public Read<T> withUsername(String username) {
+            checkArgument(username != null, "username cannot be null");
+            return builder().setUsername(username).build();
+        }
+
+        /**
+         * Specifies the ERT user password.
+         * @param password
+         * @return
+         */
+        public Read<T> withPassword(String password) {
+            return builder().setPassword(password).build();
+        }
+
+        /**
+         * Specifies the DACS/ERT position parameter.<br>
+         * If unset the  address of the local host is used.
+         * This is achieved by retrieving the name of the host from the system,
+         * then resolving that name into an InetAddress.
+         * @param appId
+         */
+        public Read<T> withPosition(String position) {
+            checkArgument(position != null, "position cannot be null");
+            return builder().setPosition(position).build();
+        }
+
+        /**
+         * Specifies the DACS/ERT Application Id parameter.
+         * @param appId
+         */
+        public Read<T> withAppId(String appId) {
+            checkArgument(appId != null, "appId cannot be null");
+            return builder().setAppId(appId).build();
+        }
+
+        /**
+         * <p>Specifies the Websocket timeout in MilliSeconds.
+         * <p>This must be >= 60000mS (twice ping timeout)
+         * @param timeout
+         */
+        public Read<T> withTimeout(int timeout) {
+            checkArgument(timeout >= 60000, "timeout must be > 60000 (larger than ping timer x2), but was: %s", timeout);
+            return builder().setTimeout(timeout).build();
+        }
+
+        /**
+         * <p>Specified the maximum number of mounts.
+         * @param maxMounts
+         */
+        public Read<T> withMaxMounts(int maxMounts) {
+            checkArgument(maxMounts > 0, "maxMounts must be greater than zero", maxMounts);
+            return builder().setMaxMounts(maxMounts).build();
+        }
+        /**
+         * When set to less than {@code Long.MAX_VALUE} act as a Bounded Source. Used for testing.
+         * @param maxNumRecords
+         */
+        public Read<T> withMaxNumRecords(long maxNumRecords) {
+            checkArgument(maxNumRecords > 0, "maxNumRecords must be greater than zero, but was: %s", maxNumRecords);
+            return builder().setMaxNumRecords(maxNumRecords).build();
+        }
+
+        /**
+         * When set, these field values will be cached and returned in each update.
+         * @param cachedFields
+         */
+        public Read<T> withCachedFields(Set<String> cachedFields) {
+            checkArgument(cachedFields != null,  "cachedFields cannot be null");
+            return builder().setCachedFields(cachedFields).build();
+        }
+
+        /**
+         * Specifies the MarketPriceMessage coder.
+         * @param coder
+         */
+        public Read<T> withCoder(Coder<T> coder) {
+            checkArgument(coder != null, "coder cannot be null");
+            return builder().setCoder(coder).build();
+        }
+
+        @Override
+        public PCollection<T> expand(PBegin input) {
+
+            checkArgument(getUsername() != null, "withUsername() is required");
+            checkArgument(getTokenAuth() == false || getPassword() != null, "password cannot be null");
+            checkArgument(getInstrumentTuples() != null, "withInstrumentTuples() is required");
+            checkArgument(getServiceDiscovery() == true || getHostname() != null, "withHostname() is required");
+
+            // Handles unbounded source to bounded conversion if maxNumRecords is set.
+            Unbounded<T> unbounded = org.apache.beam.sdk.io.Read.from(createSource());
+
+            PTransform<PBegin, PCollection<T>> transform = unbounded;
+
+            if (getMaxNumRecords() < Long.MAX_VALUE) {
+                transform = unbounded.withMaxNumRecords(getMaxNumRecords());
+            }
+
+            return input.getPipeline().apply(transform);
+        }
+
+        @Override
+        public void populateDisplayData(DisplayData.Builder builder) {
+            super.populateDisplayData(builder);
+            builder.addIfNotNull(DisplayData.item("hostname", getHostname()));
+            builder.addIfNotNull(DisplayData.item("port",     getPort()));
+            builder.addIfNotNull(DisplayData.item("username", getUsername()));
+            builder.addIfNotNull(DisplayData.item("position", getPosition()));
+            builder.addIfNotNull(DisplayData.item("appid",    getAppId()));
+        }
 
         /**
          * Creates an UnboundedSource with the configuration in {@link Read}. Primary
          * use case is unit tests, should not be used in an application.
          */
-		@VisibleForTesting
-		UnboundedTrepWsSource<T> createSource() {
+        @VisibleForTesting
+        UnboundedTrepWsSource<T> createSource() {
             return new UnboundedTrepWsSource<T>(this, 0);
-		}
+        }
 
         @Override
         public String toString() {
@@ -447,25 +688,25 @@ public class TrepWsIO {
                     + "maxMounts=" + getMaxMounts() + "]";
         }
 
-	}
+    }
 
-	private TrepWsIO() {}
+    private TrepWsIO() {}
 
-	@FunctionalInterface
-	public interface MessageMapper<T> extends Serializable {
-		T mapMessage(MarketPrice message);
-	}
+    @FunctionalInterface
+    public interface MessageMapper<T> extends Serializable {
+        T mapMessage(ConcurrentHashMap<String, LoadingCache<String, String>> cache, MarketPrice message, Set<String> set);
+    }
 
-	@VisibleForTesting
-	protected static class UnboundedTrepWsSource<T> extends UnboundedSource<T, TrepCheckpointMark> {
+    @VisibleForTesting
+    protected static class UnboundedTrepWsSource<T> extends UnboundedSource<T, TrepCheckpointMark> {
 
-		private final Read<T> spec;
-		private final int id;
-		
-		public UnboundedTrepWsSource(Read<T> spec, int id) {
-			this.spec = spec;
-			this.id = id;
-		}
+        private final Read<T> spec;
+        private final int id;
+
+        public UnboundedTrepWsSource(Read<T> spec, int id) {
+            this.spec = spec;
+            this.id = id;
+        }
 
         /**
          * <p>
@@ -478,34 +719,40 @@ public class TrepWsIO {
          * @see org.apache.beam.sdk.io.UnboundedSource#split(int,
          *      org.apache.beam.sdk.options.PipelineOptions)
          */
-		@Override
-		public List<UnboundedTrepWsSource<T>> split(int desiredNumSplits, PipelineOptions options) 
-				throws Exception {
+        @Override
+        public List<UnboundedTrepWsSource<T>> split(int desiredNumSplits, PipelineOptions options)
+                throws Exception {
 
-			List<UnboundedTrepWsSource<T>> sources = new ArrayList<>();
-			
-			List<InstrumentTuple> instruments = new ArrayList<>(spec.getInstrumentTuples());
-		    // (a) fetch all instrumentTuples
-			// (b) split list of instrumentTuples into a single tuple per RIC
-		    // (c) round-robin assign the tuples to splits
+            List<UnboundedTrepWsSource<T>> sources = new ArrayList<>();
 
-			int maxMounts = spec.getMaxMounts();
-			
+            List<InstrumentTuple> instruments = new ArrayList<>(spec.getInstrumentTuples());
+            // (a) fetch all instrumentTuples
+            // (b) split list of instrumentTuples into a single tuple per RIC
+            // (c) round-robin assign the tuples to splits
+
+            // limit mounts to 1 if connecting to ERT.
+            int maxMounts = 1;
+            if (spec.getTokenAuth()) {
+                LOG.info("Limiting max mounts to 1 when connecting to ERT");
+            } else {
+               maxMounts = spec.getMaxMounts();
+            }
+
             List<InstrumentTuple> singleInstrument = new ArrayList<>();
             for (InstrumentTuple tuple : instruments) {
                 for (String ric : tuple.getInstruments()) {
                     singleInstrument.add(
                         InstrumentTuple.of(tuple.getService(), Lists.newArrayList(ric), tuple.getFields()));
                 }
-            }	
-                   
+            }
+
             checkArgument(desiredNumSplits > 0);
-            
-			int numSplits = Math.min(desiredNumSplits, maxMounts);
-			LOG.info("Splitting into {} sources from {} desired splits", numSplits, desiredNumSplits);
-			
-			List<List<InstrumentTuple>> assignments = new ArrayList<>(numSplits);
-			
+
+            int numSplits = Math.min(desiredNumSplits, maxMounts);
+            LOG.info("Splitting into {} sources from {} desired splits", numSplits, desiredNumSplits);
+
+            List<List<InstrumentTuple>> assignments = new ArrayList<>(numSplits);
+
             for (int i = 0; i < numSplits; i++) {
                 assignments.add(new ArrayList<>());
             }
@@ -514,172 +761,187 @@ public class TrepWsIO {
             }
 
             for (int i = 0; i < numSplits; i++) {
-                
+
               List<InstrumentTuple> assignedToSplit = assignments.get(i);
                 if (assignments.get(i).size() > 0) {
-                    
-                    LOG.info("Instruments assigned to split {} (total {}) {}", 
+
+                    List<String> rics = Lists.newArrayList();
+                    assignedToSplit.forEach(t -> rics.addAll(t.getInstruments()));
+
+                    LOG.info("Instruments assigned to split {} (total {}) {}",
                         i, assignedToSplit.size(),
-                        Joiner.on(",").join(assignedToSplit));
-                
+                        Joiner.on(",").join(rics));
+
                     sources.add(new UnboundedTrepWsSource<>(
                             spec.builder().setInstrumentTuples(assignedToSplit).build(), i));
                 } else {
-                    LOG.info("Source {} not created as there are no instruments to assign!",i);
+                    LOG.info("Source {} not created as there are no instruments to assign!", i);
                 }
             }
-            
-			return sources;
-		}
 
-		@Override
-		public UnboundedReader<T> createReader(
-				PipelineOptions options, TrepCheckpointMark checkpointMark) {
-			return new UnboundedTrepWsReader<T>(this, checkpointMark, id);
-		}
+            return sources;
+        }
 
-		@Override
-		public Coder<T> getOutputCoder() {
-			return this.spec.getCoder();
-		}
+        @Override
+        public UnboundedReader<T> createReader(
+                PipelineOptions options, TrepCheckpointMark checkpointMark) {
+            return new UnboundedTrepWsReader<T>(this, checkpointMark, id);
+        }
 
-		@Override
-		public Coder<TrepCheckpointMark> getCheckpointMarkCoder() {
-			return SerializableCoder.of(TrepCheckpointMark.class);
-		}
-	}
+        @Override
+        public Coder<T> getOutputCoder() {
+            return this.spec.getCoder();
+        }
 
-	@VisibleForTesting
-	static class UnboundedTrepWsReader<T> extends UnboundedReader<T> {
+        @Override
+        public Coder<TrepCheckpointMark> getCheckpointMarkCoder() {
+            return SerializableCoder.of(TrepCheckpointMark.class);
+        }
+    }
 
-		private Read<T> spec;
-		private int id;
-		private UnboundedTrepWsSource<T> source;
-		private TrepCheckpointMark checkpointMark;
-		
-		private T       currentMessage;
-        private Instant currentTimestamp;
+    @VisibleForTesting
+    static class UnboundedTrepWsReader<T> extends UnboundedReader<T> {
 
-        private String server;
-        private String position;
-
-        private Deque<MarketPrice>       dispatchQueue;
+        private Read<T> spec;
+        private String                   position;
+        private String                   server;
+        private List<String>             protocols;
         protected Session                session;
-        private ListeningExecutorService service;
-  
-		public UnboundedTrepWsReader(UnboundedTrepWsSource<T> source, TrepCheckpointMark checkpointMark, int id) {
-			this.source = source;
-			this.id = id;
-			if (checkpointMark != null) {
-				this.checkpointMark = checkpointMark;
-			} else {
-				this.checkpointMark = new TrepCheckpointMark();
-			}
-			this.currentMessage = null;	
-		}
+        private int                      id;
 
-		@Override
-		public boolean start() throws IOException {
-			
+        private T                        currentMessage;
+        private TrepCheckpointMark       checkpointMark;
+        private UnboundedTrepWsSource<T> source;
+        private Instant                  currentTimestamp;
+        private JSONObject               authJson;
+        private JSONObject               serviceJson;
+        private Deque<MarketPrice>       dispatchQueue;
+        private ListeningExecutorService service;
+        private ScheduledExecutorService scheduledService;
+
+        private ConcurrentHashMap<String, LoadingCache<String, String>> cache;
+
+        protected GsonBuilder builder;
+        protected Gson gson;
+
+        public UnboundedTrepWsReader(UnboundedTrepWsSource<T> source, TrepCheckpointMark checkpointMark, int id) {
+            this.source = source;
+            this.id = id;
+            if (checkpointMark != null) {
+                this.checkpointMark = checkpointMark;
+            } else {
+                this.checkpointMark = new TrepCheckpointMark();
+            }
+            this.currentMessage = null;
+        }
+
+        @Override
+        public boolean start() throws IOException {
+
             spec = source.spec;
             LOG.info("Starting {} with config {}",id, spec.toString());
-            
+            protocols = Lists.newArrayList("tr_json2");
+            authJson = null;
+            serviceJson = null;
+            cache = new ConcurrentHashMap<String, LoadingCache<String, String>>();
             dispatchQueue = new ConcurrentLinkedDeque<MarketPrice>();
-            
+
             service = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor());
-    			
-			try {
+            scheduledService = Executors.newScheduledThreadPool(1);
 
-				if (spec.getPosition() == null) {
-					position = Inet4Address.getLocalHost().getHostAddress();
-				} else {
-					position = spec.getPosition();
-				}
-				
-				server = String.format("ws://%s:%s/WebSocket", spec.getHostname(), spec.getPort());
-	
-				// Note: Login request send immediately after connection
-				session = connect(server, spec.getUsername(), spec.getAppId(), position, spec.getTimeout());
-				
-			} catch (Exception e) {
-				
-				String error = "Cannot connect to " + server + 
-						" with username:" + spec.getUsername() + 
-						" appId:" + spec.getAppId() +
-						" & position:" + position +
-						" id " + String.valueOf(id) +
-						" due to " + e.getMessage();
-				LOG.error(error);
-				
-				throw new IOException(error,e);
-			}
-			
-			return advance();
-		}
+            builder = new GsonBuilder();
+            builder.disableHtmlEscaping();
+            builder.excludeFieldsWithoutExposeAnnotation();
+            builder.setLenient();
+            gson = builder.create();
 
-		@Override
-		public boolean advance() throws IOException {
-		    
-		    MarketPrice message = dispatchQueue.poll();
-		    
-		    if (message == null) {
-		        currentMessage = null;
-		        return false;
-		    }
+            try {
+                // Note: Login request send immediately after connection
+                session = connect();
 
-		    try {     
-		        
-		        queueSize.update(dispatchQueue.size());
+            } catch (Exception e) {
 
-		        if (!nullToEmpty(message.getDomain()).isEmpty())  {
-		            LOG.info("Domain message {} {}", id, message.getJsonString());
+                String error = "ERROR: Cannot connect to " + server +
+                        " with username:" + spec.getUsername() +
+                        " appId:" + spec.getAppId() +
+                        " & position:" + position +
+                        " id " + String.valueOf(id) +
+                        " due to " + e.getMessage();
+                LOG.error(error);
 
-		            // Inspect the login message
-		            if (nullToEmpty(message.getDomain()).equalsIgnoreCase(LOGIN)) {
+                throw new IOException(error, e);
+            }
 
-		                // Error if login is unsuccessful, stream will be Closed
-		                if (nullToEmpty(message.getState().getStream()).equalsIgnoreCase(CLOSED)) { 
-		                    throw new Exception("Login unsuccessful " + message.getJsonString());
+            return advance();
+        }
 
-		                } else {
+        @Override
+        public boolean advance() throws IOException {
 
-		                    LOG.info("Sending requests to ADS {}", id);
-		                    records.inc(sendRequest(session, spec.getInstrumentTuples(), id));
-		                }
-		            }
-		            return false;		
+            MarketPrice message = dispatchQueue.poll();
 
-		        // Log status messages
-		        } else if (nullToEmpty(message.getType()).equalsIgnoreCase(STATUS)) {
+            if (message == null) {
+                currentMessage = null;
+                return false;
+            }
+
+            try {
+
+                queueSize.update(dispatchQueue.size());
+
+                if (!nullToEmpty(message.getDomain()).isEmpty())  {
+                    LOG.info("Domain message {} {}", id, message.getJsonString());
+
+                    // Inspect the login message
+                    if (nullToEmpty(message.getDomain()).equalsIgnoreCase(LOGIN)) {
+
+                        // Error if login is unsuccessful, stream will be Closed
+                        if (nullToEmpty(message.getState().getStream()).equalsIgnoreCase(CLOSED)) {
+                            throw new Exception("Login unsuccessful " + message.getJsonString());
+
+                        } else {
+
+                            LOG.info("Sending requests to ADS {}", id);
+                            records.inc(sendRequest(session, spec.getInstrumentTuples(), id));
+                        }
+                    }
+                    return false;
+
+                // Log status messages
+                } else if (nullToEmpty(message.getType()).equalsIgnoreCase(STATUS)) {
                     LOG.warn("Status message {} {}", id, message.getJsonString());
-		            status.inc();
-		            return false;
+                    status.inc();
+                    return false;
 
-		       // Exception on either a websocket or TREP error message
-		        } else if (nullToEmpty(message.getType()).equalsIgnoreCase(ERROR)) {
+               // Exception on either a websocket or TREP error message
+                } else if (nullToEmpty(message.getType()).equalsIgnoreCase(ERROR)) {
 
-		            LOG.error("Error received {} {}", id, message.toString());	
-		            throw new Exception(message.toString());
+                    LOG.error("ERROR: {} Websocket or TREP message {}", id, message.toString());
+                    currentMessage = null;
+                    throw new Exception(message.toString());
 
-		        // Else process the Refresh (Image) and Update messages	
-		        } else {
+                // Else process the Refresh (Image) and Update messages
+                } else {
 
                     // Using a checkpoint with a firehose source like TREP is moot as messages
                     // do not need to be acknowledged. However we can use the Checkpoint to
                     // calculate the oldest timestamp for watermarking.
-		            checkpointMark.addMessage(message);
+                    checkpointMark.addMessage(message);
 
-                    currentTimestamp = new Instant(message.getTimestamp());		             
-		            currentMessage   = this.source.spec.getMessageMapper().mapMessage(message);
+                    currentTimestamp = new Instant(message.getTimestamp());
+                    currentMessage   = this.source.spec.getMessageMapper().mapMessage(cache, message, spec.getCachedFields());
 
-		            messages.inc();
-		            return true;
-		        }
+                    messages.inc();
 
-		    } catch (Exception e) {
-		        throw new IOException(e);
-		    }
-		}
+                    //LOG.info(currentMessage.toString());
+                    return true;
+                }
+
+            } catch (Exception e) {
+                currentMessage = null;
+                throw new IOException(String.format("%s exception:%s", message.toString(), e));
+            }
+        }
 
         @Override
         public Instant getWatermark() {
@@ -688,54 +950,53 @@ public class TrepWsIO {
             return watermark;
         }
 
-		@Override
-		public CheckpointMark getCheckpointMark() {		
-		    return checkpointMark;
-		}
+        @Override
+        public CheckpointMark getCheckpointMark() {
+            return checkpointMark;
+        }
 
-		@Override
-		public UnboundedSource<T, ?> getCurrentSource() {
-			return source;
-		}
+        @Override
+        public UnboundedSource<T, ?> getCurrentSource() {
+            return source;
+        }
 
-		@Override
-		public T getCurrent() throws NoSuchElementException {
-			
-			if (currentMessage == null) {
-				throw new NoSuchElementException();
-			}
-			
-			return currentMessage;
-		}
+        @Override
+        public T getCurrent() throws NoSuchElementException {
 
-		@Override
-		public Instant getCurrentTimestamp() throws NoSuchElementException {
-			
-			if (currentMessage == null) {
-				throw new NoSuchElementException();
-			}
-			return currentTimestamp;
-		}
-		
-		/** Close the TREP session
-		 * @see org.apache.beam.sdk.io.Source.Reader#close()
-		 */
-		@Override
-		public void close() {
-			
-				LOG.info("Close {}", id);
-			
-			try {
-				session.getBasicRemote().sendText(CLOSE);
-				session.close();
-			} catch (Exception e) {
-				LOG.debug("Unable to close (because we never logged on?)");
-			}
-			service.shutdown();
-			
-		}
+            if (currentMessage == null) {
+                throw new NoSuchElementException();
+            }
 
-		/**
+            return currentMessage;
+        }
+
+        @Override
+        public Instant getCurrentTimestamp() throws NoSuchElementException {
+
+            if (currentMessage == null) {
+                throw new NoSuchElementException();
+            }
+            return currentTimestamp;
+        }
+
+        /** Close the TREP session
+         * @see org.apache.beam.sdk.io.Source.Reader#close()
+         */
+        @Override
+        public void close() {
+
+            LOG.info("Close called on {}", id);
+
+            try {
+                session.getBasicRemote().sendText(CLOSE);
+                session.close();
+            } catch (Exception e) {
+                LOG.debug("Unable to close (because we never logged on?)");
+            }
+            service.shutdown();
+        }
+
+        /**
          * <p>
          * Connect to the ADS websocket server.
          * <ul>
@@ -745,43 +1006,222 @@ public class TrepWsIO {
          * <li>position DACS position
          * <li>timeout websocket timeout <br>
          * <br>
-         * 
-         * @param server
-         * @param user
-         * @param appId
-         * @param position
-         * @param timeout
+         *
          * @return Session
          * @throws Exception
          */
-		private Session connect(String server, String user, String appId, String position, Integer timeout) 
-		        throws Exception {
+        private Session connect() throws Exception {
 
-		    WebSocketContainer container = ContainerProvider.getWebSocketContainer();
+            int expireTime = 0;
+            String authToken = "";
 
-		    ClientEndpointConfig clientEndpointConfig =
-		            ClientEndpointConfig.Builder.create()
-		            .preferredSubprotocols(Lists.newArrayList("tr_json2"))
-		            .build();
+            if (spec.getPosition() == null) {
+                position = Inet4Address.getLocalHost().getHostAddress();
+            } else {
+                position = spec.getPosition();
+            }
 
-		    if (timeout != null) {
-		        container.setDefaultMaxSessionIdleTimeout(timeout);
-		        LOG.info("Setting {} MaxSessionIdleTimeout to {}mS", id, timeout);
-		    }
+            // server, spec.getUsername(), spec.getPassword(), spec.getAppId(), position,
+            // spec.getTimeout()
+            WebSocketContainer container = ContainerProvider.getWebSocketContainer();
 
-		    LOG.info("Connecting {} to WebSocket {} with username:{} appId:{} & position:{}",
-		            new Object[] { id, server, spec.getUsername(), appId, position});
+            if (spec.getTokenAuth()) {
+                authJson = getAuthenticationInfo(null, spec.getUsername(), spec.getPassword(),
+                        new URIBuilder().setScheme("https")
+                        .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
+                        .setPath(spec.getTokenAuthPath()).build());
 
-		    ListenableFuture<Session> future = service.submit(new Callable<Session>() {
-		        public Session call() throws Exception {
+                if (spec.getServiceDiscovery()) {
+                    serviceJson = queryServiceDiscovery(authJson.getString("access_token"),
+                            new URIBuilder().setScheme("https")
+                                    .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
+                                    .setPath(spec.getDiscoveryPath()).setParameter("transport", "websocket").build());
 
-                    return container.connectToServer(
-                            new TrepWsListener(dispatchQueue, server, user, appId, position, id), 
-                            clientEndpointConfig, new URI(server));
-		        }
-		    });
-		    return future.get(timeout, TimeUnit.MILLISECONDS);
+                    Services services = gson.fromJson(serviceJson.toString(), Services.class);
 
-		}
-	}
+                    services.getServices().stream()
+                    .filter(e -> e.getLocation().size() >= 2)
+                    .filter(e -> e.getLocation().get(0).startsWith(spec.getRegion()))
+                    .filter(e -> e.getTransport().equalsIgnoreCase("websocket"))
+                    .forEach(e -> {
+                        LOG.info("{}", e);
+                        server = String.format("wss://%s:%s/WebSocket", e.getEndpoint(), e.getPort());
+                        protocols = e.getDataFormat();
+                    });
+                    if (server == null)
+                        throw new IOException("No endpoints found in region " + spec.getRegion());
+
+                } else {
+                    server = String.format("wss://%s:%s/WebSocket", spec.getHostname(), spec.getPort());
+                }
+
+                // Determine when the access token expires. We will re-authenticate before then.
+                expireTime = Integer.parseInt(authJson.getString("expires_in"));
+
+                authToken = authJson.getString("access_token");
+
+                if (authJson == null)
+                    throw new Exception("Unable to connect to authentication server");
+                LOG.info("Connecting to WebSocket {} with expireTime {} seconds", server, expireTime);
+
+            } else {
+                server = String.format("ws://%s:%s/WebSocket", spec.getHostname(), spec.getPort());
+                LOG.info("Connecting to WebSocket {}", server);
+            }
+
+            ClientEndpointConfig clientEndpointConfig = ClientEndpointConfig.Builder.create()
+                    .preferredSubprotocols(protocols).build();
+
+            container.setDefaultMaxSessionIdleTimeout(spec.getTimeout());
+
+            LOG.info("Connecting {} to WebSocket {} with username:{} appId:{} & position:{}",
+                    new Object[] { id, server, spec.getUsername(), spec.getAppId(), position });
+
+            TrepWsListener listener = new TrepWsListener(dispatchQueue, server, spec.getUsername(), spec.getAppId(),
+                    position, authToken, spec.getTokenAuth(), id);
+
+            ListenableFuture<Session> future = service.submit(new Callable<Session>() {
+                public Session call() throws Exception {
+                    return container.connectToServer(listener, clientEndpointConfig, new URI(server));
+                }
+            });
+            Session session = future.get(spec.getTimeout(), TimeUnit.MILLISECONDS);
+
+            if (spec.getTokenAuth()) {
+                scheduledService.scheduleAtFixedRate(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+
+                            authJson = getAuthenticationInfo(authJson, spec.getUsername(), spec.getPassword(),
+                                    new URIBuilder().setScheme("https")
+                                    .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
+                                    .setPath(spec.getTokenAuthPath()).build());
+
+                            if (authJson == null)
+                                throw new Exception("Unable to connect to authentication server");
+
+                            TrepWsListener.sendLoginRequest(session, spec.getUsername(), spec.getAppId(), position,
+                                    authJson.getString("access_token"), false, true, 0);
+                            LOG.info("Updating token {}", authJson.getString("access_token"));
+                        } catch (Exception e) {
+                            LOG.error("Error resending login request ", e);
+                        }
+                    }
+                }, expireTime - 30, expireTime - 30, TimeUnit.SECONDS);
+            }
+            return session;
+        }
+    }
+
+    /**
+     * Authenticate to the gateway via an HTTP post request. Initially authenticates
+     * using the specified password. If information from a previous authentication
+     * response is provided, it instead authenticates using the refresh token from
+     * that response.
+     *
+     * @param previousAuthResponseJson Information from a previous authentication,
+     * if available
+     * @return A JSONObject containing the authentication information from the
+     * response.
+     */
+    protected static JSONObject getAuthenticationInfo(JSONObject previousAuthResponseJson, String username,
+            String password, URI url) {
+
+        try {
+            SSLConnectionSocketFactory sslsf = new SSLConnectionSocketFactory(new SSLContextBuilder().build());
+
+            HttpClient httpclient = HttpClients.custom().setSSLSocketFactory(sslsf).build();
+            HttpPost httppost = new HttpPost(url);
+
+            // Set request parameters.
+            List<NameValuePair> params = new ArrayList<NameValuePair>(2);
+            params.add(new BasicNameValuePair("client_id", username));
+            params.add(new BasicNameValuePair("username", username));
+            params.add(new BasicNameValuePair("takeExclusiveSignOnControl", "true"));
+
+            if (previousAuthResponseJson == null) {
+                // First time through, send password.
+                params.add(new BasicNameValuePair("grant_type", "password"));
+                params.add(new BasicNameValuePair("password", password));
+                params.add(new BasicNameValuePair("scope", "trapi"));
+                LOG.info("Sending authentication request with password to {} {}", url, params);
+            } else {
+                // Use the refresh token we got from the last authentication response.
+                params.add(new BasicNameValuePair("grant_type", "refresh_token"));
+                params.add(
+                        new BasicNameValuePair("refresh_token", previousAuthResponseJson.getString("refresh_token")));
+                LOG.info("Sending authentication request with refresh token to {}", url);
+            }
+
+            httppost.setEntity(new UrlEncodedFormEntity(params, "UTF-8"));
+
+            // Execute and get the response.
+            HttpResponse response = httpclient.execute(httppost);
+
+            if (response.getStatusLine().getStatusCode() != HttpStatus.SC_OK) {
+                // Authentication failed.
+                LOG.error("EDP-GW authentication failure: " + response.getStatusLine().getStatusCode() + " "
+                        + response.getStatusLine().getReasonPhrase());
+                LOG.error("Text: " + EntityUtils.toString(response.getEntity()));
+
+                if (response.getStatusLine().getStatusCode() == HttpStatus.SC_UNAUTHORIZED
+                        && previousAuthResponseJson != null) {
+                    // If we got a 401 response (unauthorised), our refresh token may have expired.
+                    // Try again using our password.
+                    return getAuthenticationInfo(null, username, password, url);
+                }
+
+                return null;
+            }
+
+            // Authentication was successful. Deserialize the response and return it.
+            JSONObject responseJson = new JSONObject(EntityUtils.toString(response.getEntity()));
+            LOG.info("EDP-GW Authentication succeeded. {}", responseJson.toString());
+            return responseJson;
+
+        } catch (Exception e) {
+            LOG.error("EDP-GW authentication failure:", e);
+            return null;
+        }
+    }
+
+    /**
+     * Retrieve service information indicating locations to connect to.
+     *
+     * @return A JSONObject containing the service information.
+     */
+    public static JSONObject queryServiceDiscovery(String authToken, URI uri) {
+        try {
+            SSLConnectionSocketFactory sslsf = new SSLConnectionSocketFactory(new SSLContextBuilder().build());
+
+            HttpClient httpclient = HttpClients.custom().setSSLSocketFactory(sslsf).build();
+            HttpGet httpget = new HttpGet(uri);
+
+            httpget.setHeader("Authorization", "Bearer " + authToken);
+
+            LOG.info("Sending EDP-GW service discovery request to {}", uri.toString());
+
+            // Execute and get the response.
+            HttpResponse response = httpclient.execute(httpget);
+
+            if (response.getStatusLine().getStatusCode() != HttpStatus.SC_OK) {
+                // Discovery request failed.
+                LOG.error("EDP-GW Service discovery result failure: {} {} Text: {}",
+                        new Object[] { response.getStatusLine().getStatusCode(),
+                                response.getStatusLine().getReasonPhrase(),
+                                EntityUtils.toString(response.getEntity()) });
+                return null;
+            }
+
+            // Discovery request was successful. Deserialize the response and return it.
+            JSONObject responseJson = new JSONObject(EntityUtils.toString(response.getEntity()));
+            LOG.info("EDP-GW Service discovery succeeded. {}",responseJson.toString());
+            return responseJson;
+
+        } catch (Exception e) {
+            LOG.error("EDP-GW Service discovery failure:", e);
+            return null;
+        }
+    }
 }

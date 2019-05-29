@@ -8,13 +8,15 @@ This project contains two components
 
 **Building the Trep-Websocket-IO project**
 
+Note: Integration tests are dependent on specific TREP/ERT infrastructure & credentials and will report a failure until the tests are updated to fit your environment. To avoid this run the mvn commands with ``-DskipTests``
 
 From the root directory run:
 
 ```
-mvn clean 
-mvn install 
+mvn clean
+mvn install
 ```
+
 
 To create a distributable ZIP file, `cd` to the `Dataflow-Pipeline` directory and run:
 
@@ -22,7 +24,7 @@ To create a distributable ZIP file, `cd` to the `Dataflow-Pipeline` directory an
  mvn assembly:assembly
  ```
 
-Note: Integration tests are dependent on a specific TREP infrastructure and may fail, but the build will succeed. 
+
 
 Alternatively run the `./build.sh` command from the root which contains all of the above commands in one script.
 
@@ -36,7 +38,7 @@ In the event you would like to contribute to this repository, it is required tha
 
 Please email a signed and scanned copy to `sdkagreement@thomsonreuters.com`.  If you require that a signed agreement has to be physically mailed to us, please email the request for a mailing address and we will get back to you on where you can send the signed documents.
 
-Documentation for the TREP WebSocket API (that this project is based on) and a Question & Answer forum are available at the  [WebSocket API Section of the Thomson Reuters Developer Community](https://developers.thomsonreuters.com/websocket-api). 
+Documentation for the TREP WebSocket API (that this project is based on) and a Question & Answer forum are available at the  [WebSocket API Section of the Thomson Reuters Developer Community](https://developers.thomsonreuters.com/websocket-api).
 
 # Support SLA
-Issues raised via GitHub will be addressed in a best-effort manner. Please refer any questions and issues to me [Clive Stokes](mailto:clive.stokes@refinitiv.com)  in the first instance. 
+Issues raised via GitHub will be addressed in a best-effort manner. Please refer any questions and issues to me [Clive Stokes](mailto:clive.stokes@refinitiv.com)  in the first instance.

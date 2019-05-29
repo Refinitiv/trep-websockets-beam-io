@@ -1,12 +1,12 @@
 /*
  * Copyright Refinitiv 2018
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,8 @@
 package com.refinitiv.beamio.trepwebsockets.json;
 
 import java.io.Serializable;
+import java.util.Objects;
+
 import com.google.gson.annotations.Expose;
 import com.google.gson.annotations.SerializedName;
 
@@ -55,43 +57,26 @@ public class Qos implements Serializable {
 		return this;
 	}
 
-	@Override
-	public String toString() {
-		return "Qos [" + (rate != null ? "rate=" + rate + ", " : "")
-				+ (timeliness != null ? "timeliness=" + timeliness : "") + "]";
-	}
+    @Override
+    public String toString() {
+        return String.format("Qos [rate=%s, timeliness=%s]", rate, timeliness);
+    }
 
-	@Override
-	public int hashCode() {
-		final int prime = 31;
-		int result = 1;
-		result = prime * result + ((rate == null) ? 0 : rate.hashCode());
-		result = prime * result + ((timeliness == null) ? 0 : timeliness.hashCode());
-		return result;
-	}
+    @Override
+    public int hashCode() {
+        return Objects.hash(rate, timeliness);
+    }
 
-	@Override
-	public boolean equals(Object obj) {
-		if (this == obj)
-			return true;
-		if (obj == null)
-			return false;
-		if (getClass() != obj.getClass())
-			return false;
-		Qos other = (Qos) obj;
-		if (rate == null) {
-			if (other.rate != null)
-				return false;
-		} else if (!rate.equals(other.rate))
-			return false;
-		if (timeliness == null) {
-			if (other.timeliness != null)
-				return false;
-		} else if (!timeliness.equals(other.timeliness))
-			return false;
-		return true;
-	}
-
-
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        Qos other = (Qos) obj;
+        return Objects.equals(rate, other.rate) && Objects.equals(timeliness, other.timeliness);
+    }
 
 }

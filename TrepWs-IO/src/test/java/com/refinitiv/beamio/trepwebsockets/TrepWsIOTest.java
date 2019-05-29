@@ -1,12 +1,12 @@
 /*
  * Copyright Refinitiv 2018
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,6 +23,7 @@ import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
@@ -40,9 +41,9 @@ import com.refinitiv.beamio.trepwebsockets.TrepWsIO.InstrumentTuple;
 @RunWith(JUnit4.class)
 public class TrepWsIOTest {
 
-	@Rule 
+	@Rule
 	public final transient TestPipeline pipeline = TestPipeline.create();
-	
+
 	private void runPipelineExpectingException(String innerMessage) {
 	    try {
 	        pipeline.run();
@@ -51,10 +52,10 @@ public class TrepWsIOTest {
 	        assertThat(Throwables.getRootCause(e).getMessage(), containsString(innerMessage));
 	    }
 	}
-  
+
     @Test
 	public void testConnectionRefused() {
-	            
+
         pipeline.apply(TrepWsIO.read()
                 .withHostname("localhost")
                 .withPort(1)
@@ -64,13 +65,13 @@ public class TrepWsIOTest {
 
         runPipelineExpectingException("Connection refused");
 	}
-    
+
     @Test(expected=IllegalArgumentException.class)
     public void testRequiredParameters() {
-                
+
         pipeline.apply(TrepWsIO.read().withInstrumentTuples(null));
         pipeline.run();
-    }  
+    }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     @Test
@@ -91,10 +92,12 @@ public class TrepWsIOTest {
                 .withInstrumentTuples(tuples);
         PipelineOptions pipelineOptions = PipelineOptionsFactory.create();
         int desiredNumSplits = 12;
+        AtomicReference<String> ref = new AtomicReference<String>();
+        ref.set("hello");
         TrepWsIO.UnboundedTrepWsSource initialSource = new TrepWsIO.UnboundedTrepWsSource(read,1);
         List<TrepWsIO.UnboundedTrepWsSource> splits = initialSource.split(desiredNumSplits, pipelineOptions);
 
         assertEquals(6, splits.size());
     }
-  
+
 }

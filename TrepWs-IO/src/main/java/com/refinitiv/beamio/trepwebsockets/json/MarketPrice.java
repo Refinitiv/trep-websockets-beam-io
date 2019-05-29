@@ -1,12 +1,12 @@
 /*
  * Copyright Refinitiv 2018
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -25,6 +25,8 @@ import org.joda.time.Instant;
 import com.google.gson.annotations.Expose;
 import com.google.gson.annotations.SerializedName;
 
+import avro.shaded.com.google.common.collect.Maps;
+
 public class MarketPrice implements Serializable {
 
 	private static final long serialVersionUID = -1613203974707615163L;
@@ -32,39 +34,39 @@ public class MarketPrice implements Serializable {
 	@SerializedName("Type")
 	@Expose
 	private String type;
-	
+
 	@SerializedName("Fields")
 	@Expose
-	@Nullable private Map<String, String> fields;
-	
+	@Nullable private Map<String, String> fields = Maps.newHashMap();
+
 	@SerializedName("Qos")
 	@Expose
 	@Nullable private Qos qos;
-	
+
 	@SerializedName("State")
 	@Expose
 	@Nullable private State state;
-	
+
 	@SerializedName("PermData")
 	@Expose
 	@Nullable private String permData;
-	
+
 	@SerializedName("ID")
 	@Expose
 	@Nullable private Long iD;
-	
+
 	@SerializedName("SeqNumber")
 	@Expose
 	@Nullable private Long seqNumber;
-	
+
 	@SerializedName("Domain")
 	@Expose
 	@Nullable private String domain;
-	
+
 	@SerializedName("Elements")
 	@Expose
 	@Nullable private Elements elements;
-	
+
 	@SerializedName("Key")
 	@Expose
 	@Nullable private Key key;
@@ -72,7 +74,7 @@ public class MarketPrice implements Serializable {
 	@SerializedName("UpdateType")
 	@Expose
 	@Nullable private String updateType;
-	
+
 	@SerializedName("DoNotConflate")
 	@Expose
 	@Nullable private Boolean doNotConflate;
@@ -80,36 +82,43 @@ public class MarketPrice implements Serializable {
 	@SerializedName("Text")
 	@Expose
 	@Nullable private String text;
-	
+
 	private String jsonString;
-	
 	Instant timestamp;
-	
 
     /**
-     * MarketPrice JSON 
-     * 
+     * MarketPrice JSON
+     *
      * @param id
      * @param type
      * @param seqNumber
      * @param domain
      * @param jsonString
      */
-public MarketPrice(Long id, String type, Long seqNumber, String domain, String jsonString) {
+	public MarketPrice(Long id, String type, Long seqNumber, String domain, String jsonString, Instant timestamp) {
 		this.type = type;
 		this.iD = id;
 		this.seqNumber = seqNumber;
 		this.domain = domain;
 		this.jsonString = jsonString;
-		timestamp = Instant.now();
+		this.timestamp = timestamp;
 	}
 
 	public Instant getTimestamp() {
-		return timestamp;
+		return this.timestamp;
 	}
-	
+
+    public void setTimestamp(Instant timestamp) {
+        this.timestamp = timestamp;
+    }
+
+    public MarketPrice withTimestamp(Instant timestamp) {
+        this.timestamp = timestamp;
+        return this;
+    }
+
 	public String getType() {
-		return type;
+		return this.type;
 	}
 
 	public void setType(String type) {
@@ -122,7 +131,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public Map<String, String> getFields() {
-		return fields;
+		return this.fields;
 	}
 
 	public void setFields(Map<String, String> fields) {
@@ -135,20 +144,20 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public String getUpdateType() {
-		return updateType;
+		return this.updateType;
 	}
 
 	public void setUpdateType(String updateType) {
 		this.updateType = updateType;
 	}
-	
+
 	public MarketPrice withUpdateType(String updateType) {
 		this.updateType = updateType;
 		return this;
 	}
-	
+
 	public Qos getQos() {
-		return qos;
+		return this.qos;
 	}
 
 	public void setQos(Qos qos) {
@@ -161,7 +170,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public State getState() {
-		return state;
+		return this.state;
 	}
 
 	public void setState(State state) {
@@ -174,7 +183,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public String getPermData() {
-		return permData;
+		return this.permData;
 	}
 
 	public void setPermData(String permData) {
@@ -187,7 +196,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public Long getID() {
-		return iD;
+		return this.iD;
 	}
 
 	public void setID(Long iD) {
@@ -200,7 +209,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public Long getSeqNumber() {
-		return seqNumber;
+		return this.seqNumber;
 	}
 
 	public void setSeqNumber(Long seqNumber) {
@@ -213,7 +222,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public String getDomain() {
-		return domain;
+		return this.domain;
 	}
 
 	public void setDomain(String domain) {
@@ -226,7 +235,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public Elements getElements() {
-		return elements;
+		return this.elements;
 	}
 
 	public void setElements(Elements elements) {
@@ -239,7 +248,7 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public Key getKey() {
-		return key;
+		return this.key;
 	}
 
 	public void setKey(Key key) {
@@ -252,20 +261,20 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public Boolean isDoNotConflate() {
-		return doNotConflate;
+		return this.doNotConflate;
 	}
 
 	public void setDoNotConflate(Boolean doNotConflate) {
 		this.doNotConflate = doNotConflate;
 	}
-	
+
 	public MarketPrice withDoNotConflate(Boolean doNotConflate) {
 		this.doNotConflate = doNotConflate;
 		return this;
 	}
 
 	public String getText() {
-		return text;
+		return this.text;
 	}
 
 	public void setText(String text) {
@@ -278,39 +287,31 @@ public MarketPrice(Long id, String type, Long seqNumber, String domain, String j
 	}
 
 	public String getJsonString() {
-		return jsonString;
+		return this.jsonString;
 	}
 
 	public void setJsonString(String jsonString) {
 		this.jsonString = jsonString;
 	}
 
+	public MarketPrice withJsonString(String jsonString) {
+        this.jsonString = jsonString;
+        return this;
+	}
+
 	public Boolean getDoNotConflate() {
-		return doNotConflate;
-	}
-
-	public void setTimestamp(Instant timestamp) {
-		this.timestamp = timestamp;
+		return this.doNotConflate;
 	}
 
 	@Override
-	public String toString() {
-		return "MarketPrice [" + (type != null ? "Type=" + type + " " : "")
-				+ (text != null ? "Text=" + text + " " : "") 
-				+ (updateType != null ? "UpdateType=" + updateType + " " : "") 
-				+ (iD != null ? "ID=" + iD + " " : "")
-				+ (state != null ? "State=" + state + " " : "") 
-				+ (domain != null ? "Domain=" + domain + ", " : "")
-				+ (elements != null ? "Elements=" + elements + " " : "") 
-				+ (key != null ? "Key=" + key + " " : "")
-				+ (fields != null ? "Fields=" + fields.toString() + " " : "")
-				+ (permData != null ? "PermData=" + permData + " " : "")
-				+ (seqNumber != null ? "SeqNumber=" + seqNumber + " " : "") 
-				+ (doNotConflate != null ? "DoNotConflate=" + doNotConflate + " " : "") 
-				+ (qos != null ? "Qos=" + qos : "") + "]";
-	}
+    public String toString() {
+        return String.format(
+                "MarketPrice [type=%s, fields=%s, qos=%s, state=%s, permData=%s, iD=%s, seqNumber=%s, domain=%s, elements=%s, key=%s, updateType=%s, doNotConflate=%s, text=%s, jsonString=%s, timestamp=%s]",
+                type, fields, qos, state, permData, iD, seqNumber, domain, elements, key, updateType, doNotConflate,
+                text, jsonString, timestamp);
+    }
 
-	@Override
+    @Override
 	public int hashCode() {
 		final int prime = 31;
 		int result = 1;

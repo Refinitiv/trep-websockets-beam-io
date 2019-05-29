@@ -1,5 +1,5 @@
-mvn clean 
-mvn install
+mvn clean
+mvn install -DskipTests
 
 cd Dataflow-Pipeline
-mvn assembly:assembly
+mvn assembly:assembly -DskipTests

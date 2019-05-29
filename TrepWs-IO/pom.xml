@@ -6,61 +6,40 @@
     <parent>
         <groupId>com.refinitiv.beamio</groupId>
         <artifactId>Trep-Websocket-IO</artifactId>
-        <version>1.0.0</version>
+        <version>1.1.0</version>
     </parent>
 
     <artifactId>trepws-io</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
-        <maven-compiler-plugin.version>2.3.2</maven-compiler-plugin.version>
-
-        <ask.dependencies.log4j.version>1.2.17</ask.dependencies.log4j.version>
-        <ask.dependencies.slf4j.version>1.7.25</ask.dependencies.slf4j.version>
-        <ask.dependencies.logback.version>1.1.3</ask.dependencies.logback.version>
-
-        <google-cloud-dataflow-java-sdk.version>2.5.0</google-cloud-dataflow-java-sdk.version>
-        
-        <joda-time.version>2.9.9</joda-time.version>
-        <slf4j.version>1.7.25</slf4j.version>
-
-        <exec-maven-plugin.version>1.7.0</exec-maven-plugin.version>
     </properties>
-
 
     <dependencies>
         <dependency>
             <groupId>com.google.cloud.dataflow</groupId>
             <artifactId>google-cloud-dataflow-java-sdk-all</artifactId>
-            <version>${google-cloud-dataflow-java-sdk.version}</version>
+            <version>2.5.0</version>
         </dependency>
-        
+
         <dependency>
             <groupId>joda-time</groupId>
             <artifactId>joda-time</artifactId>
-            <version>${joda-time.version}</version>
+            <version>2.9.9</version>
         </dependency>
-  
+
         <!-- SLF4J API with JUL binding -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>${ask.dependencies.slf4j.version}</version>
+            <version>1.7.25</version>
         </dependency>
 
         <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-core</artifactId>
-            <version>${ask.dependencies.logback.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-            <version>${ask.dependencies.logback.version}</version>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-jdk14</artifactId>
+            <version>1.7.13</version>
         </dependency>
 
         <dependency>
@@ -98,20 +77,26 @@
             <artifactId>javax.annotation-api</artifactId>
             <version>1.3.1</version>
         </dependency>
-               
+
         <dependency>
             <groupId>com.google.auto.value</groupId>
             <artifactId>auto-value-annotations</artifactId>
             <version>1.6.2</version>
         </dependency>
-        
+
         <dependency>
             <groupId>com.google.auto.value</groupId>
             <artifactId>auto-value</artifactId>
             <version>1.6.2</version>
             <scope>provided</scope>
         </dependency>
-                
+
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.6</version>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.hamcrest</groupId>
@@ -132,32 +117,13 @@
     <build>
 
         <plugins>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.1.0</version>
-
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                    </execution>
-                </executions>
-
+                <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <finalName>${project.artifactId}</finalName>
-
-                    <artifactSet>
-                        <includes>
-                          <include>javax.websocket:*</include>
-                          <include>org.glassfish.tyrus.bundles:*</include>
-                          <include>com.google.code.gson:*</include>
-                          <include>org.json:*</include>
-                          <include>com.refinitiv:*</include>
-                        </includes>
-                    </artifactSet>
+                    <source>1.8</source>
+                    <target>1.8</target>
                 </configuration>
             </plugin>
 
@@ -207,9 +173,9 @@
                     </execution>
                 </executions>
             </plugin>
-                        
+
         </plugins>
-        
+
     </build>
 
     <profiles>
@@ -222,7 +188,7 @@
                 <doclint>none</doclint>
             </properties>
         </profile>
-                    
+
     </profiles>
-    
+
 </project>

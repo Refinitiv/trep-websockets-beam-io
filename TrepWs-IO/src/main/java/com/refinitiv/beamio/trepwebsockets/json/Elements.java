@@ -1,12 +1,12 @@
 /*
  * Copyright Refinitiv 2018
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,8 @@
 package com.refinitiv.beamio.trepwebsockets.json;
 
 import java.io.Serializable;
+import java.util.Objects;
+
 import com.google.gson.annotations.Expose;
 import com.google.gson.annotations.SerializedName;
 
@@ -69,7 +71,10 @@ public class Elements implements Serializable {
 	@SerializedName("MaxMsgSize")
 	@Expose
 	private Long maxMsgSize;
-	
+    @SerializedName("AuthenticationToken")
+    @Expose
+    private String authenticationToken;
+
 	private final static long serialVersionUID = -5454523231053331691L;
 
 	public Long getPingTimeout() {
@@ -280,146 +285,60 @@ public class Elements implements Serializable {
 		return this;
 	}
 
-	@Override
-	public String toString() {
-		return "Elements [" + (applicationName != null ? "applicationName=" + applicationName + ", " : "")
-				+ (applicationId != null ? "applicationId=" + applicationId + ", " : "")
-				+ (position != null ? "position=" + position + ", " : "")
-				+ (pingTimeout != null ? "pingTimeout=" + pingTimeout + ", " : "")
-				+ (maxMsgSize != null ? "maxMsgSize=" + maxMsgSize + ", " : "")
-				+ (supportOptimizedPauseResume != null
-						? "supportOptimizedPauseResume=" + supportOptimizedPauseResume + ", "
-						: "")
-				+ (supportViewRequests != null ? "supportViewRequests=" + supportViewRequests + ", " : "")
-				+ (supportBatchRequests != null ? "supportBatchRequests=" + supportBatchRequests + ", " : "")
-				+ (supportEnhancedSymbolList != null ? "supportEnhancedSymbolList=" + supportEnhancedSymbolList + ", "
-						: "")
-				+ (supportStandby != null ? "supportStandby=" + supportStandby + ", " : "")
-				+ (singleOpen != null ? "singleOpen=" + singleOpen + ", " : "")
-				+ (supportPauseResume != null ? "supportPauseResume=" + supportPauseResume + ", " : "")
-				+ (allowSuspectData != null ? "allowSuspectData=" + allowSuspectData + ", " : "")
-				+ (providePermissionProfile != null ? "providePermissionProfile=" + providePermissionProfile + ", "
-						: "")
-				+ (providePermissionExpressions != null
-						? "providePermissionExpressions=" + providePermissionExpressions + ", "
-						: "")
-				+ (supportOMMPost != null ? "supportOMMPost=" + supportOMMPost : "") + "]";
-	}
+	public String getAuthenticationToken() {
+        return authenticationToken;
+    }
 
-	@Override
-	public int hashCode() {
-		final int prime = 31;
-		int result = 1;
-		result = prime * result + ((allowSuspectData == null) ? 0 : allowSuspectData.hashCode());
-		result = prime * result + ((applicationId == null) ? 0 : applicationId.hashCode());
-		result = prime * result + ((applicationName == null) ? 0 : applicationName.hashCode());
-		result = prime * result + ((maxMsgSize == null) ? 0 : maxMsgSize.hashCode());
-		result = prime * result + ((pingTimeout == null) ? 0 : pingTimeout.hashCode());
-		result = prime * result + ((position == null) ? 0 : position.hashCode());
-		result = prime * result
-				+ ((providePermissionExpressions == null) ? 0 : providePermissionExpressions.hashCode());
-		result = prime * result + ((providePermissionProfile == null) ? 0 : providePermissionProfile.hashCode());
-		result = prime * result + ((singleOpen == null) ? 0 : singleOpen.hashCode());
-		result = prime * result + ((supportBatchRequests == null) ? 0 : supportBatchRequests.hashCode());
-		result = prime * result + ((supportEnhancedSymbolList == null) ? 0 : supportEnhancedSymbolList.hashCode());
-		result = prime * result + ((supportOMMPost == null) ? 0 : supportOMMPost.hashCode());
-		result = prime * result + ((supportOptimizedPauseResume == null) ? 0 : supportOptimizedPauseResume.hashCode());
-		result = prime * result + ((supportPauseResume == null) ? 0 : supportPauseResume.hashCode());
-		result = prime * result + ((supportStandby == null) ? 0 : supportStandby.hashCode());
-		result = prime * result + ((supportViewRequests == null) ? 0 : supportViewRequests.hashCode());
-		return result;
-	}
+    public void setAuthenticationToken(String authenticationToken) {
+        this.authenticationToken = authenticationToken;
+    }
+    public Elements withAuthenticationToken(String authenticationToken) {
+        this.authenticationToken = authenticationToken;
+        return this;
+    }
 
-	@Override
-	public boolean equals(Object obj) {
-		if (this == obj)
-			return true;
-		if (obj == null)
-			return false;
-		if (getClass() != obj.getClass())
-			return false;
-		Elements other = (Elements) obj;
-		if (allowSuspectData == null) {
-			if (other.allowSuspectData != null)
-				return false;
-		} else if (!allowSuspectData.equals(other.allowSuspectData))
-			return false;
-		if (applicationId == null) {
-			if (other.applicationId != null)
-				return false;
-		} else if (!applicationId.equals(other.applicationId))
-			return false;
-		if (applicationName == null) {
-			if (other.applicationName != null)
-				return false;
-		} else if (!applicationName.equals(other.applicationName))
-			return false;
-		if (maxMsgSize == null) {
-			if (other.maxMsgSize != null)
-				return false;
-		} else if (!maxMsgSize.equals(other.maxMsgSize))
-			return false;
-		if (pingTimeout == null) {
-			if (other.pingTimeout != null)
-				return false;
-		} else if (!pingTimeout.equals(other.pingTimeout))
-			return false;
-		if (position == null) {
-			if (other.position != null)
-				return false;
-		} else if (!position.equals(other.position))
-			return false;
-		if (providePermissionExpressions == null) {
-			if (other.providePermissionExpressions != null)
-				return false;
-		} else if (!providePermissionExpressions.equals(other.providePermissionExpressions))
-			return false;
-		if (providePermissionProfile == null) {
-			if (other.providePermissionProfile != null)
-				return false;
-		} else if (!providePermissionProfile.equals(other.providePermissionProfile))
-			return false;
-		if (singleOpen == null) {
-			if (other.singleOpen != null)
-				return false;
-		} else if (!singleOpen.equals(other.singleOpen))
-			return false;
-		if (supportBatchRequests == null) {
-			if (other.supportBatchRequests != null)
-				return false;
-		} else if (!supportBatchRequests.equals(other.supportBatchRequests))
-			return false;
-		if (supportEnhancedSymbolList == null) {
-			if (other.supportEnhancedSymbolList != null)
-				return false;
-		} else if (!supportEnhancedSymbolList.equals(other.supportEnhancedSymbolList))
-			return false;
-		if (supportOMMPost == null) {
-			if (other.supportOMMPost != null)
-				return false;
-		} else if (!supportOMMPost.equals(other.supportOMMPost))
-			return false;
-		if (supportOptimizedPauseResume == null) {
-			if (other.supportOptimizedPauseResume != null)
-				return false;
-		} else if (!supportOptimizedPauseResume.equals(other.supportOptimizedPauseResume))
-			return false;
-		if (supportPauseResume == null) {
-			if (other.supportPauseResume != null)
-				return false;
-		} else if (!supportPauseResume.equals(other.supportPauseResume))
-			return false;
-		if (supportStandby == null) {
-			if (other.supportStandby != null)
-				return false;
-		} else if (!supportStandby.equals(other.supportStandby))
-			return false;
-		if (supportViewRequests == null) {
-			if (other.supportViewRequests != null)
-				return false;
-		} else if (!supportViewRequests.equals(other.supportViewRequests))
-			return false;
-		return true;
-	}
+    @Override
+    public String toString() {
+        return String.format(
+                "Elements [applicationName=%s, supportOptimizedPauseResume=%s, position=%s, supportViewRequests=%s, supportBatchRequests=%s, supportEnhancedSymbolList=%s, supportStandby=%s, singleOpen=%s, supportPauseResume=%s, allowSuspectData=%s, providePermissionProfile=%s, providePermissionExpressions=%s, applicationId=%s, supportOMMPost=%s, pingTimeout=%s, maxMsgSize=%s, authenticationToken=%s]",
+                applicationName, supportOptimizedPauseResume, position, supportViewRequests, supportBatchRequests,
+                supportEnhancedSymbolList, supportStandby, singleOpen, supportPauseResume, allowSuspectData,
+                providePermissionProfile, providePermissionExpressions, applicationId, supportOMMPost, pingTimeout,
+                maxMsgSize, authenticationToken);
+    }
 
+    @Override
+    public int hashCode() {
+        return Objects.hash(allowSuspectData, applicationId, applicationName, authenticationToken, maxMsgSize,
+                pingTimeout, position, providePermissionExpressions, providePermissionProfile, singleOpen,
+                supportBatchRequests, supportEnhancedSymbolList, supportOMMPost, supportOptimizedPauseResume,
+                supportPauseResume, supportStandby, supportViewRequests);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        Elements other = (Elements) obj;
+        return Objects.equals(allowSuspectData, other.allowSuspectData)
+                && Objects.equals(applicationId, other.applicationId)
+                && Objects.equals(applicationName, other.applicationName)
+                && Objects.equals(authenticationToken, other.authenticationToken)
+                && Objects.equals(maxMsgSize, other.maxMsgSize) && Objects.equals(pingTimeout, other.pingTimeout)
+                && Objects.equals(position, other.position)
+                && Objects.equals(providePermissionExpressions, other.providePermissionExpressions)
+                && Objects.equals(providePermissionProfile, other.providePermissionProfile)
+                && Objects.equals(singleOpen, other.singleOpen)
+                && Objects.equals(supportBatchRequests, other.supportBatchRequests)
+                && Objects.equals(supportEnhancedSymbolList, other.supportEnhancedSymbolList)
+                && Objects.equals(supportOMMPost, other.supportOMMPost)
+                && Objects.equals(supportOptimizedPauseResume, other.supportOptimizedPauseResume)
+                && Objects.equals(supportPauseResume, other.supportPauseResume)
+                && Objects.equals(supportStandby, other.supportStandby)
+                && Objects.equals(supportViewRequests, other.supportViewRequests);
+    }
 }

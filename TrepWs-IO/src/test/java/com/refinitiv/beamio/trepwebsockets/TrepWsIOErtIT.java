@@ -15,7 +15,7 @@ import com.google.common.collect.Lists;
 import com.refinitiv.beamio.trepwebsockets.TrepWsIO.InstrumentTuple;
 
 @RunWith(JUnit4.class)
-public class TrepWsIOIT {
+public class TrepWsIOErtIT {
 
     @Rule
     public final transient TestPipeline pipeline = TestPipeline.create();
@@ -28,13 +28,17 @@ public class TrepWsIOIT {
         PCollection<MarketPriceMessage> output =
             pipeline.apply(
                 TrepWsIO.read()
-                .withHostname("ads2")
-                .withPort(5900)
-                .withUsername("radmin")
+                .withRegion("eu")
+                .withTokenAuth(true)
+                .withServiceDiscovery(true)
+                .withHostname("amer-3.pricing.streaming.edp.thomsonreuters.com")
+                .withPort(443)
+                .withUsername("ERT-USERNAME")
+                .withPassword("ERT-PASSWORD")
+                .withMaxMounts(4)
                 .withInstrumentTuples(
                     Lists.newArrayList(
-                        InstrumentTuple.of(null, Lists.newArrayList("EUR="),Lists.newArrayList("PROD_PERM", "BID", "ASK")) ))
-                        //,InstrumentTuple.of("IDN_SELECTFEED", Lists.newArrayList("0#ED:","0#.FTSE","0#.INDEX"), null)))
+                        InstrumentTuple.of("ELEKTRON_DD", Lists.newArrayList("EUR=","JPY=","NOK=",".FTSE","LCOc1"),Lists.newArrayList("PROD_PERM", "BID", "ASK")) ))
                 .withCachedFields(Collections.singleton("PROD_PERM"))
                 .withTimeout(60000)
                 .withMaxNumRecords(loop));

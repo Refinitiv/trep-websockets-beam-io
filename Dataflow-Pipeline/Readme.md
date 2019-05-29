@@ -5,7 +5,7 @@ A Spring boot application that will start a Google Dataflow pipeline which uses 
 
 A developer may customise this example or recreate a new pipeline to fulfil their specific requirements with additional beam-io transforms.
 
-To run the pipeline unzip the `trepws-pipeline_1.0.0.zip` file, `cd` to the directory and type: `java -jar trepws-pipeline-1.0.0.jar`
+To run the pipeline unzip the `trepws-pipeline_1.1.0.zip` file, `cd` to the directory and type: `java -jar trepws-pipeline-1.1.0.jar`
 
 Note: you may also need to set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to point to a service account key file when running this application.
 
@@ -17,51 +17,58 @@ The application configuration is in the config\spring.xml file (below).
         <property name="AppName"             value="StreamingPipeline"/>
         <property name="zone"                value="YOUR PREFFERED GCP ZONE" />
         <property name="region"              value="YOUR PREFFERED GCP REGION" />
-        <property name="location"            value="YOUR PREFFERED GCP LOCATION" /> 
+        <property name="location"            value="YOUR PREFFERED GCP LOCATION" />
         <property name="numWorkers"          value="1" />
         <property name="maxNumWorkers"       value="1" />
         <property name="tempLocation"        value="YOUR GOOGLE STORAGE (gs://bucket/path)" />
         <!-- single CPU, 3.75 GB mem -->
-        <property name="workerMachineType"   value="n1-standard-1" /> 
+        <property name="workerMachineType"   value="n1-standard-1" />
         <property name="diskSizeGb"          value="20" />
         <!-- <property name="usePublicIps"        value="true" /> -->
     </bean>
-    
+
     <bean name="streaming"
         class="com.refinitiv.beamio.trepws.dataflow.PipelineBean">
-        
+
         <!-- Setting a unique job name and re-running this app will start multiple pipelines -->
         <!-- You'll probably have to set a unique position too -->
         <property name="jobName"     value="trep-websocket-io" />
-        
+
         <property name="hostname"    value="YOUR TREP/ADS hostname or IP address" />
         <property name="port"        value="15000" />
-        
+
+       <!-- For ERT -->
+       <property name="tokenAuth"           value="true" />
+       <property name="password"            value="ert-password" />
+       <property name="serviceDiscovery"    value="true" />
+       <property name="region"              value="eu" />
+
         <!-- The maximum number of ADS mounts (overridden if the number of  -->
         <!-- desired splits is smaller). If unset then 1 is used -->
-        <property name="maxMounts"   value="4" />
+        <!-- NOTE: for ERT maxMounts is forced to 1 to avoid clashes then performing token authentication. -->
+        <property name="maxMounts"   value="1" />
 
         <property name="username"    value="YOUR TREP/DACS id/username" />
         <property name="timeout"     value="60000" />
-        
+
         <!-- can default to 256 if property removed -->
         <!-- <property name="appId"       value="256" /> -->
-        
-        <!-- can default to local IP if property removed --> 
+
+        <!-- can default to local IP if property removed -->
         <!-- <property name="position"    value="192.168.1.105" /> -->
- 
+
         <!-- Note: please choose either one or both of the following two options! -->
 
         <!-- Removing this property will not add a PubSub publish step to the pipeline -->
         <!-- <property name="pubSub"      value="projects/YOUR GCP PROJECT NAME/topics/TOPIC TO PUBLISH TO" />  -->
-               
+
         <!-- Table is create if needed and append. Removing this property will not add a BigQuery write step to the pipeline -->
         <!-- Note: the DATASET must exit! -->
         <property name="bigQuery" value="YOUR GCP PROJECT NAME:DATASET.TABLE" />
-        
+
          <!-- Time partitioning field -->
         <property name="partition"      value="Time" />
-        
+
         <!-- Table Schema -->
         <property name="schema">
             <map>
@@ -82,23 +89,30 @@ The application configuration is in the config\spring.xml file (below).
                 <entry key="TRDTIM_1"   value="TIME" />
             </map>
         </property>
-    
+
         <!-- can default to the trep configured default service if property removed -->
-        <!-- <property name="service"     value="hdEDD" /> --> 
-        
+        <!-- <property name="service"     value="hdEDD" /> -->
+
         <!-- field list must align with the BigQuery database schema above -->
-        <property name="fieldList">  
+        <property name="fieldList">
             <list>
                 <value>PROD_PERM</value>
                 <value>DSPLY_NAME</value>
                 <value>BID</value>
                 <value>ASK</value>
                 <value>TRDPRC_1</value>
-                <value>TRDVOL_1</value>               
+                <value>TRDVOL_1</value>
                 <value>VALUE_DT1</value>
                 <value>VALUE_TS1</value>
                 <value>TRADE_DATE</value>
                 <value>TRDTIM_1</value>
+            </list>
+        </property>
+
+        <!-- if set these fields & values will be cached and populate every update  -->
+        <property name="cachedFields">
+            <list>
+                <value>PROD_PERM</value>
             </list>
         </property>
 
@@ -110,5 +124,9 @@ The application configuration is in the config\spring.xml file (below).
                 <value>GB50YT=RR</value>
             </list>
         </property>
+
+       <!--  note if the above ricList is empty, use the following query to retrieve a list of RICs from a BigQuery table -->
+        <property name="ricListQuery" value="SELECT RIC FROM `YOUR GCP PROJECT NAME:DATASET.TABLE`"/>
+
     </bean>
 ```

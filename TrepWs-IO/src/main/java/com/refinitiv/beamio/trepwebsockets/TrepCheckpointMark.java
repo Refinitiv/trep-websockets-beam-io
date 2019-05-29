@@ -1,12 +1,12 @@
 /*
  * Copyright Refinitiv 2018
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,7 +19,6 @@ import java.io.Serializable;
 import org.joda.time.Instant;
 
 import com.google.auto.value.AutoValue;
-import com.refinitiv.beamio.trepwebsockets.AutoValue_TrepCheckpointMark_Message;
 import com.refinitiv.beamio.trepwebsockets.json.MarketPrice;
 
 import java.util.ArrayList;
@@ -32,19 +31,19 @@ import org.apache.beam.sdk.io.UnboundedSource;
 import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
 
 /**
- * <p>Checkpoint for an unbounded TrepWsIOIO.Read. 
+ * <p>Checkpoint for an unbounded TrepWsIOIO.Read.
  * <p>Consists of the TREP ADS Sequence number and Timestamp.
  */
 // default coder
 public class TrepCheckpointMark implements UnboundedSource.CheckpointMark, Serializable {
 
 	private static final long serialVersionUID = 1831054650379622269L;
-	
+
 	private final State state = new State();
 
 	public TrepCheckpointMark() {
 	}
-	
+
 	/**
 	 * <p>A condensed MarketPrice message containing only sequence number and timestamp
 	 * <p>Primarily used to save memory
@@ -59,7 +58,7 @@ public class TrepCheckpointMark implements UnboundedSource.CheckpointMark, Seria
                     timestamp == null ? Instant.now() : timestamp);
 	    }
 	    public abstract Long getSeqNumber();
-	    public abstract Instant getTimestamp(); 
+	    public abstract Instant getTimestamp();
 	}
 
 	protected List<Message> getMessages() {
@@ -73,7 +72,7 @@ public class TrepCheckpointMark implements UnboundedSource.CheckpointMark, Seria
 			state.updateOldestPendingTimestampIf(message.getTimestamp(), Instant::isBefore);
 		});
 	}
-	
+
 	protected Instant getOldestPendingTimestamp() {
 	    return state.getOldestPendingTimestamp();
 	}
@@ -128,7 +127,7 @@ public class TrepCheckpointMark implements UnboundedSource.CheckpointMark, Seria
 
 		private final List<Message> messages;
 		private Instant oldestPendingTimestamp;
-		
+
 		public State() {
 			this(new ArrayList<>(), BoundedWindow.TIMESTAMP_MIN_VALUE);
 		}
@@ -156,7 +155,7 @@ public class TrepCheckpointMark implements UnboundedSource.CheckpointMark, Seria
                     }
                 });
         }
-	    
+
 		/**
 		 * Create and return a copy of the current state.
 		 *
@@ -170,7 +169,7 @@ public class TrepCheckpointMark implements UnboundedSource.CheckpointMark, Seria
 	    public Instant getOldestPendingTimestamp() {
 	       return atomicRead(() ->this.oldestPendingTimestamp);
 	     }
-		
+
 		public List<Message> getMessages() {
 			return atomicRead(() -> this.messages);
 		}
