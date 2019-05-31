@@ -988,6 +988,7 @@ public class TrepWsIO {
             LOG.info("Close called on {}", id);
 
             try {
+                scheduledService.shutdownNow();
                 session.getBasicRemote().sendText(CLOSE);
                 session.close();
             } catch (Exception e) {
