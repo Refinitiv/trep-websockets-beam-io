@@ -149,7 +149,7 @@ public class MarketPriceDeserializer implements JsonDeserializer<MarketPrice>, S
 			}
 
 		} catch (Exception e) {
-            LOG.error("ERROR: Deserialization json:{} {}", e.getMessage(), jsonObject.toString(), e);
+            LOG.error("ERROR: Deserialization json:{} {} {}", jsonObject.toString(), e.getMessage(), e);
             throw new JsonParseException(
                     String.format("%s json:%s %s", "ERROR: Deserialization ", jsonObject.toString(), e.getMessage()));
 		}

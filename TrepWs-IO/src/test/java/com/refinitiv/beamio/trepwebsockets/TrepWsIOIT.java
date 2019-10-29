@@ -20,7 +20,7 @@ public class TrepWsIOIT {
     @Rule
     public final transient TestPipeline pipeline = TestPipeline.create();
 
-    private static final long loop = 5L;
+    private static final long loop = 50L;
 
     @Test
     public void testReadMessages() {
@@ -33,8 +33,8 @@ public class TrepWsIOIT {
                 .withUsername("radmin")
                 .withInstrumentTuples(
                     Lists.newArrayList(
-                        InstrumentTuple.of(null, Lists.newArrayList("EUR="),Lists.newArrayList("PROD_PERM", "BID", "ASK")) ))
-                        //,InstrumentTuple.of("IDN_SELECTFEED", Lists.newArrayList("0#ED:","0#.FTSE","0#.INDEX"), null)))
+                        InstrumentTuple.of(null, Lists.newArrayList("EUR="),Lists.newArrayList("PROD_PERM", "BID", "ASK")),
+                        InstrumentTuple.of("IDN_SELECTFEED", Lists.newArrayList("0#ED:","0#.FTSE","0#.INDEX"), null)))
                 .withCachedFields(Collections.singleton("PROD_PERM"))
                 .withTimeout(60000)
                 .withMaxNumRecords(loop));

@@ -6,11 +6,11 @@
     <parent>
         <groupId>com.refinitiv.beamio</groupId>
         <artifactId>Trep-Websocket-IO</artifactId>
-        <version>1.1.0</version>
+        <version>1.2.0</version>
     </parent>
 
     <artifactId>trepws-io</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

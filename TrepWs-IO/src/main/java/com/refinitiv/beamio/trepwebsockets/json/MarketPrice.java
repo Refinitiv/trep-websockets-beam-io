@@ -94,6 +94,7 @@ public class MarketPrice implements Serializable {
      * @param seqNumber
      * @param domain
      * @param jsonString
+     * @param timestamp
      */
 	public MarketPrice(Long id, String type, Long seqNumber, String domain, String jsonString, Instant timestamp) {
 		this.type = type;

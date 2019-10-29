@@ -20,7 +20,7 @@ public class TrepWsIOErtIT {
     @Rule
     public final transient TestPipeline pipeline = TestPipeline.create();
 
-    private static final long loop = 5L;
+    private static final long loop = Long.MAX_VALUE-1;
 
     @Test
     public void testReadMessages() {
@@ -30,15 +30,18 @@ public class TrepWsIOErtIT {
                 TrepWsIO.read()
                 .withRegion("eu")
                 .withTokenAuth(true)
+                .withTokenStore("gs://tr-solutions-playground-temp")
                 .withServiceDiscovery(true)
                 .withHostname("amer-3.pricing.streaming.edp.thomsonreuters.com")
                 .withPort(443)
-                .withUsername("ERT-USERNAME")
-                .withPassword("ERT-PASSWORD")
-                .withMaxMounts(4)
+                .withUsername("GE-A-01103867-3-532")
+                .withPassword("FEfEMWT{$DvM6MUavwgBwATxhfgQhA")
+                .withMaxMounts(5)
                 .withInstrumentTuples(
                     Lists.newArrayList(
-                        InstrumentTuple.of("ELEKTRON_DD", Lists.newArrayList("EUR=","JPY=","NOK=",".FTSE","LCOc1"),Lists.newArrayList("PROD_PERM", "BID", "ASK")) ))
+                        InstrumentTuple.of("ELEKTRON_DD",
+                        Lists.newArrayList("EUR=","JPY=","NOK=",".FTSE","LCOc1","LCOc2","LCOc3","LCOc4","LCOc5","LCOc6","LCOc7"),
+                        Lists.newArrayList("PROD_PERM", "BID", "ASK")) ))
                 .withCachedFields(Collections.singleton("PROD_PERM"))
                 .withTimeout(60000)
                 .withMaxNumRecords(loop));

@@ -101,7 +101,7 @@ public class PipelineBean {
 
             if (getRicList().isEmpty()) {
 
-            QueryJobConfiguration queryConfig = QueryJobConfiguration
+                QueryJobConfiguration queryConfig = QueryJobConfiguration
                     .newBuilder(getRicListQuery()).build();
 
                 for (FieldValueList row : bigquery.query(queryConfig).iterateAll()) {
@@ -113,19 +113,20 @@ public class PipelineBean {
                 rics = Lists.newArrayList(getRicList());
             }
         } catch (Exception e1) {
-            logger.error("Unable to contact BigQuery ",e1);
+            logger.error("Error reading from BigQuery {}",e1);
             System.exit(1);
         }
 
+		Pipeline pipeline = Pipeline.create(options);
+
 		InstrumentTuple instrumentTuple = InstrumentTuple.of(getService(), rics , getFieldList());
 		logger.info("InstrumentTuple " + rics);
-
-		Pipeline pipeline = Pipeline.create(options);
 
 		Read<MarketPriceMessage> trepIO = TrepWsIO.read()
 				.withHostname(getHostname())
 				.withPassword(getPassword())
 				.withTokenAuth(isTokenAuth())
+                .withTokenStore(options.getGcpTempLocation())
 				.withServiceDiscovery(isServiceDiscovery())
 				.withPort(getPort())
 				.withMaxMounts(getMaxMounts())
@@ -134,13 +135,13 @@ public class PipelineBean {
 				.withCachedFields(getCachedFields())
 				.withTimeout(getTimeout());
 
-		if (getPosition() != null) {
-			trepIO = trepIO.withPosition(getPosition());
-		}
+        		if (getPosition() != null) {
+        			trepIO = trepIO.withPosition(getPosition());
+        		}
 
-		if (getAppId() != null) {
-			trepIO = trepIO.withAppId(getAppId());
-		}
+        		if (getAppId() != null) {
+        			trepIO = trepIO.withAppId(getAppId());
+        		}
 
 		PCollection<MarketPriceMessage> messages = pipeline.apply("TrepWsIO", trepIO);
 
@@ -182,16 +183,11 @@ public class PipelineBean {
 			logger.info("Streaming to PubSub");
 		}
 
-		try {
-		    logger.info(String.format("Pipeline %s is being updated ", options.getJobName()));
-			options.setUpdate(true);
-			pipeline.run(options);
-
-		} catch (Exception e) {
-		    logger.info(String.format("Pipeline %s, running a new one %s",e.getMessage(), options.getJobName()));
-			options.setUpdate(false);
-			pipeline.run(options);
-		}
+        // The options.setUpdate(true) seems to create two pipelines. This can cause
+        // problems with multiple tokens being created and stored when using ERT.
+        // Therefore please cancel the running pipeline and start a new one.
+		options.setUpdate(false);
+		pipeline.run(options);
 
 		System.out.println("Done...");
 	}

@@ -18,27 +18,41 @@ package com.refinitiv.beamio.trepwebsockets;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.nullToEmpty;
 import static com.refinitiv.beamio.trepwebsockets.TrepWsListener.CLOSE;
+import static com.refinitiv.beamio.trepwebsockets.TrepWsListener.sendLoginRequest;
 import static com.refinitiv.beamio.trepwebsockets.TrepWsListener.sendRequest;
 import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.CLOSED;
 import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.ERROR;
 import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.LOGIN;
 import static com.refinitiv.beamio.trepwebsockets.json.MarketPriceDeserializer.STATUS;
+import static org.apache.commons.lang3.StringUtils.appendIfMissing;
+import static org.apache.commons.lang3.StringUtils.right;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.Inet4Address;
 import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 import javax.websocket.ClientEndpointConfig;
 import javax.websocket.ContainerProvider;
@@ -48,16 +62,21 @@ import javax.websocket.WebSocketContainer;
 import org.apache.beam.sdk.annotations.Experimental;
 import org.apache.beam.sdk.coders.Coder;
 import org.apache.beam.sdk.coders.SerializableCoder;
+import org.apache.beam.sdk.io.FileSystems;
 import org.apache.beam.sdk.io.Read.Unbounded;
 import org.apache.beam.sdk.io.UnboundedSource;
 import org.apache.beam.sdk.io.UnboundedSource.CheckpointMark;
 import org.apache.beam.sdk.io.UnboundedSource.UnboundedReader;
+import org.apache.beam.sdk.io.fs.MoveOptions;
+import org.apache.beam.sdk.io.fs.ResourceId;
 import org.apache.beam.sdk.metrics.Counter;
 import org.apache.beam.sdk.metrics.Distribution;
 import org.apache.beam.sdk.metrics.Metrics;
 import org.apache.beam.sdk.options.PipelineOptions;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.display.DisplayData;
+import org.apache.beam.sdk.util.MimeTypes;
 import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.commons.lang3.StringUtils;
@@ -86,6 +105,8 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.io.ByteStreams;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -93,8 +114,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.refinitiv.beamio.trepwebsockets.json.MarketPrice;
 import com.refinitiv.beamio.trepwebsockets.json.Services;
-
-import avro.shaded.com.google.common.collect.Maps;
 
 @SuppressWarnings("serial")
 @Experimental(Experimental.Kind.SOURCE_SINK)
@@ -147,10 +166,11 @@ public class TrepWsIO {
      *
      * <p>
      * This source will split into <i>n</i> parts which is the minimum of
-     * desiredNumSplits and the getMaxMounts parameter. Note the default
-     * getMaxMounts is 1. The watchlist sent to each ADS mount is derived by
-     * extracting each RIC from the InstrumentTuples and distributing them in round
-     * robin order.
+     * desiredNumSplits and the getMaxMounts parameter. The desiredNumSplits is
+     * derived by the Dataflow runner from the WorkerMachineType and the NumWorkers
+     * pipeline options. Note the default getMaxMounts is 1. The watchlist sent to
+     * each ADS mount is derived by extracting each RIC from the InstrumentTuples
+     * and distributing them in round robin order.
      * <p>
      * This source does not process checkpoint marks, but does record sequence
      * numbers and timestamps for watermarking.
@@ -195,6 +215,10 @@ public class TrepWsIO {
      *        .withServiceDiscovery(true)
      *        .withRegion("eu")
      *
+     *        // Token store location used to support multiple ERT mounts. This can be
+     *        the Dataflow Temp location
+     *        .withTokenStore("gs://gcs-token-store")
+     *
      *        .withInstrumentTuples(Lists.newArrayList(instrument1, instrument2))
      *
      *        // Rest of the settings are optional:
@@ -207,7 +231,6 @@ public class TrepWsIO {
      *
      *        // The maximum number of ADS mounts (overridden if the number of
      *        // desired splits is smaller). If unset then 1 is used.
-     *        // NOTE: for ERT maxMounts is forced to 1 to avoid clashes then performing token authentication.
      *        .withMaxMounts(1)
      *
      *        // The DACS position, if unset the IP address of the local host is used
@@ -216,15 +239,15 @@ public class TrepWsIO {
      *        // The DACS application ID, if unset 256 is used
      *       .withAppId("123")
      *
-     *        // The wesocket MaxSessionIdleTimeout in milliSeconds.
+     *        // The websocket MaxSessionIdleTimeout in milliSeconds.
      *        // Note: this must be greater that 6000 (twice the ping timeout)
      *        .withTimeout(60000)
      *
      *        // For ERT to override the defaults for authentication server/port/path and discovery path
-     *       .setAuthServer("api.edp.thomsonreuters.com")
-     *       .setAuthPort(443)
-     *       .setTokenAuthPath("/auth/oauth2/beta1/token")
-     *       .setDiscoveryPath("/streaming/pricing/v1/")
+     *       .withAuthServer("api.edp.thomsonreuters.com")
+     *       .withAuthPort(443)
+     *       .withTokenAuthPath("/auth/oauth2/beta1/token")
+     *       .withDiscoveryPath("/streaming/pricing/v1/")
      *
      *       );
      *
@@ -297,10 +320,9 @@ public class TrepWsIO {
                                     cache.put(ric, initCache());
                                 }
 
-                                fields.entrySet().stream()
-                                .filter(e -> cachedFields.contains(e.getKey()))
-                                .filter(e -> e.getValue() != null)
-                                .forEach(f -> cache.get(ric).put(f.getKey(), f.getValue()));
+                                fields.entrySet().stream().filter(e -> cachedFields.contains(e.getKey()))
+                                        .filter(e -> e.getValue() != null)
+                                        .forEach(f -> cache.get(ric).put(f.getKey(), f.getValue()));
 
                                 fieldz.putAll(cache.get(ric).asMap());
 
@@ -410,6 +432,9 @@ public class TrepWsIO {
         @Nullable
         abstract Set<String> getCachedFields();
 
+        @Nullable
+        abstract String getTokenStore();
+
         abstract Builder<T> builder();
 
         @AutoValue.Builder
@@ -454,6 +479,8 @@ public class TrepWsIO {
             abstract Builder<T> setInstrumentTuples(List<InstrumentTuple> instrumentTuples);
 
             abstract Builder<T> setCachedFields(Set<String> cachedFields);
+
+            abstract Builder<T> setTokenStore(String tokenStoreLocation);
 
             abstract Read<T> build();
         }
@@ -631,6 +658,10 @@ public class TrepWsIO {
             return builder().setCachedFields(cachedFields).build();
         }
 
+        public Read<T> withTokenStore(String tokenStoreLocation) {
+            checkArgument(tokenStoreLocation != null,  "tokenStore cannot be null");
+            return builder().setTokenStore(tokenStoreLocation).build();
+        }
         /**
          * Specifies the MarketPriceMessage coder.
          * @param coder
@@ -644,7 +675,8 @@ public class TrepWsIO {
         public PCollection<T> expand(PBegin input) {
 
             checkArgument(getUsername() != null, "withUsername() is required");
-            checkArgument(getTokenAuth() == false || getPassword() != null, "password cannot be null");
+            checkArgument(getTokenAuth() == false || getPassword() != null, "withPassword cannot be null");
+            checkArgument(getTokenAuth() == false || getTokenStore() != null, "withTokenStore location cannot be null");
             checkArgument(getInstrumentTuples() != null, "withInstrumentTuples() is required");
             checkArgument(getServiceDiscovery() == true || getHostname() != null, "withHostname() is required");
 
@@ -716,12 +748,38 @@ public class TrepWsIO {
          * The number of splits is the minimum of desiredNumSplits and the getMaxMounts
          * parameter. Note the default getMaxMounts is 1.
          * <p>
+         * @throws IOException
+         * @throws URISyntaxException
          * @see org.apache.beam.sdk.io.UnboundedSource#split(int,
          *      org.apache.beam.sdk.options.PipelineOptions)
          */
         @Override
-        public List<UnboundedTrepWsSource<T>> split(int desiredNumSplits, PipelineOptions options)
-                throws Exception {
+        public List<UnboundedTrepWsSource<T>> split(int desiredNumSplits, PipelineOptions options) throws Exception {
+
+            String tokenStore = spec.getTokenStore();
+
+            // Retrieve initial authentication token, store it and pass to each instance....
+            if (spec.getTokenAuth()) {
+
+                tokenStore = appendIfMissing(spec.getTokenStore(), "/") + UUID.randomUUID().toString() + ".token";
+                LOG.info("Setting token store to {}", tokenStore);
+
+                JSONObject token = getAuthenticationInfo(null, spec.getUsername(), spec.getPassword(),
+                        new URIBuilder().setScheme("https")
+                                .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
+                                .setPath(spec.getTokenAuthPath()).build(), true);
+
+                if (token == null) {
+                    throw new IOException("Unable to connect to authentication server");
+                }
+
+                try {
+                    writeFile(tokenStore, token.toString(2));
+                    LOG.info("Writing token {} to {}", token.toString(2), tokenStore);
+                } catch (Exception e) {
+                    throw new IOException("Unable to write to file " + tokenStore);
+                }
+            }
 
             List<UnboundedTrepWsSource<T>> sources = new ArrayList<>();
 
@@ -730,13 +788,7 @@ public class TrepWsIO {
             // (b) split list of instrumentTuples into a single tuple per RIC
             // (c) round-robin assign the tuples to splits
 
-            // limit mounts to 1 if connecting to ERT.
-            int maxMounts = 1;
-            if (spec.getTokenAuth()) {
-                LOG.info("Limiting max mounts to 1 when connecting to ERT");
-            } else {
-               maxMounts = spec.getMaxMounts();
-            }
+            int maxMounts = spec.getMaxMounts();;
 
             List<InstrumentTuple> singleInstrument = new ArrayList<>();
             for (InstrumentTuple tuple : instruments) {
@@ -760,22 +812,24 @@ public class TrepWsIO {
                 assignments.get(i % numSplits).add(singleInstrument.get(i));
             }
 
-            for (int i = 0; i < numSplits; i++) {
+            for (int id = 0; id < numSplits; id++) {
 
-              List<InstrumentTuple> assignedToSplit = assignments.get(i);
-                if (assignments.get(i).size() > 0) {
+              List<InstrumentTuple> assignedToSplit = assignments.get(id);
+                if (assignments.get(id).size() > 0) {
 
                     List<String> rics = Lists.newArrayList();
                     assignedToSplit.forEach(t -> rics.addAll(t.getInstruments()));
 
-                    LOG.info("Instruments assigned to split {} (total {}) {}",
-                        i, assignedToSplit.size(),
-                        Joiner.on(",").join(rics));
+                    LOG.info("Instruments assigned to split {} (total {}) {}", new Object[] {
+                        id, assignedToSplit.size(), Joiner.on(",").join(rics)});
 
                     sources.add(new UnboundedTrepWsSource<>(
-                            spec.builder().setInstrumentTuples(assignedToSplit).build(), i));
+                            spec.builder()
+                            .setInstrumentTuples(assignedToSplit)
+                            .setTokenStore(tokenStore)
+                            .build(), id));
                 } else {
-                    LOG.info("Source {} not created as there are no instruments to assign!", i);
+                    LOG.info("Source {} not created as there are no instruments to assign!", id);
                 }
             }
 
@@ -813,11 +867,14 @@ public class TrepWsIO {
         private TrepCheckpointMark       checkpointMark;
         private UnboundedTrepWsSource<T> source;
         private Instant                  currentTimestamp;
-        private JSONObject               authJson;
         private JSONObject               serviceJson;
         private Deque<MarketPrice>       dispatchQueue;
         private ListeningExecutorService service;
-        private ScheduledExecutorService scheduledService;
+        private ScheduledExecutorService scheduledService1;
+        private ScheduledExecutorService scheduledService2;
+
+        private AtomicInteger               qSize;
+        private AtomicBoolean               qFlag;
 
         private ConcurrentHashMap<String, LoadingCache<String, String>> cache;
 
@@ -827,12 +884,13 @@ public class TrepWsIO {
         public UnboundedTrepWsReader(UnboundedTrepWsSource<T> source, TrepCheckpointMark checkpointMark, int id) {
             this.source = source;
             this.id = id;
+
             if (checkpointMark != null) {
                 this.checkpointMark = checkpointMark;
             } else {
                 this.checkpointMark = new TrepCheckpointMark();
             }
-            this.currentMessage = null;
+            currentMessage = null;
         }
 
         @Override
@@ -840,14 +898,17 @@ public class TrepWsIO {
 
             spec = source.spec;
             LOG.info("Starting {} with config {}",id, spec.toString());
+
             protocols = Lists.newArrayList("tr_json2");
-            authJson = null;
             serviceJson = null;
             cache = new ConcurrentHashMap<String, LoadingCache<String, String>>();
             dispatchQueue = new ConcurrentLinkedDeque<MarketPrice>();
+            qSize = new AtomicInteger();
+            qFlag = new AtomicBoolean(false);
 
             service = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor());
-            scheduledService = Executors.newScheduledThreadPool(1);
+            scheduledService1 = Executors.newSingleThreadScheduledExecutor();
+            scheduledService2 = Executors.newSingleThreadScheduledExecutor();
 
             builder = new GsonBuilder();
             builder.disableHtmlEscaping();
@@ -856,8 +917,20 @@ public class TrepWsIO {
             gson = builder.create();
 
             try {
+
                 // Note: Login request send immediately after connection
                 session = connect();
+
+                // Periodically set a flag to update the dispatchQueue size counter
+                queueSize.update(0);
+                scheduledService2.scheduleAtFixedRate(new Runnable() {
+                    @Override
+                    public void run() {
+                        qFlag.set(true);
+                    }
+                }, 60, 1, TimeUnit.SECONDS);
+
+
 
             } catch (Exception e) {
 
@@ -867,7 +940,7 @@ public class TrepWsIO {
                         " & position:" + position +
                         " id " + String.valueOf(id) +
                         " due to " + e.getMessage();
-                LOG.error(error);
+                LOG.error(error, e);
 
                 throw new IOException(error, e);
             }
@@ -887,10 +960,15 @@ public class TrepWsIO {
 
             try {
 
-                queueSize.update(dispatchQueue.size());
+                if (message.getType().equalsIgnoreCase("Update"))
+                    qSize.set(Math.max(qSize.get(), dispatchQueue.size()));
+
+                if (qFlag.getAndSet(false)) {
+                    queueSize.update(qSize.getAndSet(0));
+                }
 
                 if (!nullToEmpty(message.getDomain()).isEmpty())  {
-                    LOG.info("Domain message {} {}", id, message.getJsonString());
+                    LOG.info("Domain message on mount {} {}", id, message.getJsonString());
 
                     // Inspect the login message
                     if (nullToEmpty(message.getDomain()).equalsIgnoreCase(LOGIN)) {
@@ -901,7 +979,7 @@ public class TrepWsIO {
 
                         } else {
 
-                            LOG.info("Sending requests to ADS {}", id);
+                            LOG.info("Sending {} requests to mount {}", spec.getInstrumentTuples().size(), id);
                             records.inc(sendRequest(session, spec.getInstrumentTuples(), id));
                         }
                     }
@@ -909,14 +987,14 @@ public class TrepWsIO {
 
                 // Log status messages
                 } else if (nullToEmpty(message.getType()).equalsIgnoreCase(STATUS)) {
-                    LOG.warn("Status message {} {}", id, message.getJsonString());
+                    LOG.warn("Status message on mount {} {}", id, message.getJsonString());
                     status.inc();
                     return false;
 
                // Exception on either a websocket or TREP error message
                 } else if (nullToEmpty(message.getType()).equalsIgnoreCase(ERROR)) {
 
-                    LOG.error("ERROR: {} Websocket or TREP message {}", id, message.toString());
+                    LOG.error("ERROR: {} Websocket or TREP message on mount {}", id, message.toString());
                     currentMessage = null;
                     throw new Exception(message.toString());
 
@@ -933,7 +1011,9 @@ public class TrepWsIO {
 
                     messages.inc();
 
-                    //LOG.info(currentMessage.toString());
+                    // Uncomment for testing only!
+                    LOG.info(String.format("Mount:%d %s %s", id, ((MarketPriceMessage) currentMessage).getName(),
+                            ((MarketPriceMessage) currentMessage).getFields()));
                     return true;
                 }
 
@@ -985,21 +1065,26 @@ public class TrepWsIO {
         @Override
         public void close() {
 
-            LOG.info("Close called on {}", id);
+            LOG.info("Close called on mount {}", id);
 
             try {
-                scheduledService.shutdownNow();
+                deleteFile(spec.getTokenStore());
                 session.getBasicRemote().sendText(CLOSE);
                 session.close();
             } catch (Exception e) {
                 LOG.debug("Unable to close (because we never logged on?)");
+            } finally {
+                scheduledService1.shutdownNow();
+                scheduledService2.shutdownNow();
+                service.shutdown();
             }
-            service.shutdown();
         }
 
         /**
          * <p>
          * Connect to the ADS websocket server.
+         * <br>
+         * Use cloud storage to share the access token between instances when using an ERT in Cloud connection.
          * <ul>
          * <li>server ADS websocket connection e.g. ws://ads1:15000/WebSocket
          * <li>user DACS user
@@ -1014,7 +1099,8 @@ public class TrepWsIO {
         private Session connect() throws Exception {
 
             int expireTime = 0;
-            String authToken = "";
+            final int delay = 15;
+            String authToken = null;
 
             if (spec.getPosition() == null) {
                 position = Inet4Address.getLocalHost().getHostAddress();
@@ -1022,18 +1108,13 @@ public class TrepWsIO {
                 position = spec.getPosition();
             }
 
-            // server, spec.getUsername(), spec.getPassword(), spec.getAppId(), position,
-            // spec.getTimeout()
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
 
             if (spec.getTokenAuth()) {
-                authJson = getAuthenticationInfo(null, spec.getUsername(), spec.getPassword(),
-                        new URIBuilder().setScheme("https")
-                        .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
-                        .setPath(spec.getTokenAuthPath()).build());
 
+                JSONObject token = new JSONObject(readFile(spec.getTokenStore()));
                 if (spec.getServiceDiscovery()) {
-                    serviceJson = queryServiceDiscovery(authJson.getString("access_token"),
+                    serviceJson = queryServiceDiscovery(token.getString("access_token"),
                             new URIBuilder().setScheme("https")
                                     .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
                                     .setPath(spec.getDiscoveryPath()).setParameter("transport", "websocket").build());
@@ -1041,13 +1122,13 @@ public class TrepWsIO {
                     Services services = gson.fromJson(serviceJson.toString(), Services.class);
 
                     services.getServices().stream()
-                    .filter(e -> e.getLocation().size() >= 2)
-                    .filter(e -> e.getLocation().get(0).startsWith(spec.getRegion()))
-                    .filter(e -> e.getTransport().equalsIgnoreCase("websocket"))
-                    .forEach(e -> {
-                        LOG.info("{}", e);
-                        server = String.format("wss://%s:%s/WebSocket", e.getEndpoint(), e.getPort());
-                        protocols = e.getDataFormat();
+                        .filter(e -> e.getLocation().size() >= 2)
+                        .filter(e -> e.getLocation().get(0).startsWith(spec.getRegion()))
+                        .filter(e -> e.getTransport().equalsIgnoreCase("websocket"))
+                        .forEach(e -> {
+                            LOG.info("{}", e);
+                            server = String.format("wss://%s:%s/WebSocket", e.getEndpoint(), e.getPort());
+                            protocols = e.getDataFormat();
                     });
                     if (server == null)
                         throw new IOException("No endpoints found in region " + spec.getRegion());
@@ -1057,13 +1138,53 @@ public class TrepWsIO {
                 }
 
                 // Determine when the access token expires. We will re-authenticate before then.
-                expireTime = Integer.parseInt(authJson.getString("expires_in"));
+                expireTime = Integer.parseInt(token.getString("expires_in")) - 60;
+                authToken = token.getString("access_token");
 
-                authToken = authJson.getString("access_token");
-
-                if (authJson == null)
+                if (authToken == null)
                     throw new Exception("Unable to connect to authentication server");
-                LOG.info("Connecting to WebSocket {} with expireTime {} seconds", server, expireTime);
+
+                LOG.info("Connecting to WebSocket {} with token expire time of {} seconds, delay {}, id {} ",
+                        new Object[] { server, expireTime, (id == 0 ? delay : delay * 2), id });
+
+                // Use cloud storage to share the access token between instances
+                scheduledService1.scheduleAtFixedRate(new Runnable() {
+
+                    @Override
+                    public void run() {
+                        try {
+
+                            if (id == 0) {
+
+                                JSONObject newToken = getAuthenticationInfo(
+                                        new JSONObject(readFile(spec.getTokenStore())),
+                                        spec.getUsername(),
+                                        spec.getPassword(),
+                                        new URIBuilder().setScheme("https")
+                                        .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
+                                        .setPath(spec.getTokenAuthPath()).build(),
+                                        true);
+
+                                if (newToken == null)
+                                    throw new Exception("Unable to connect to authentication server");
+
+                                writeFile(spec.getTokenStore(), newToken.toString(2));
+                            }
+
+                            String token = new JSONObject(readFile(spec.getTokenStore())).getString("access_token");
+
+                            sendLoginRequest(session, spec.getUsername(), spec.getAppId(), position,
+                                    token, false, true, id);
+
+                            System.out.println(
+                                    String.format("Sent login reissue request to mount %d from session id %s token %s",
+                                            id, session.getId(), right(token, 60)));
+
+                        } catch (Exception e) {
+                            System.err.println("Error resending login reissse reqeuest " + e.getMessage());
+                        }
+                    }
+                }, (id == 0 ? delay : delay * 2), expireTime, TimeUnit.SECONDS);
 
             } else {
                 server = String.format("ws://%s:%s/WebSocket", spec.getHostname(), spec.getPort());
@@ -1086,33 +1207,15 @@ public class TrepWsIO {
                     return container.connectToServer(listener, clientEndpointConfig, new URI(server));
                 }
             });
-            Session session = future.get(spec.getTimeout(), TimeUnit.MILLISECONDS);
 
-            if (spec.getTokenAuth()) {
-                scheduledService.scheduleAtFixedRate(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
+            final Session session = future.get(spec.getTimeout(), TimeUnit.MILLISECONDS);
 
-                            authJson = getAuthenticationInfo(authJson, spec.getUsername(), spec.getPassword(),
-                                    new URIBuilder().setScheme("https")
-                                    .setHost(String.format("%s:%s", spec.getAuthServer(), spec.getAuthPort()))
-                                    .setPath(spec.getTokenAuthPath()).build());
-
-                            if (authJson == null)
-                                throw new Exception("Unable to connect to authentication server");
-
-                            TrepWsListener.sendLoginRequest(session, spec.getUsername(), spec.getAppId(), position,
-                                    authJson.getString("access_token"), false, true, 0);
-                            LOG.info("Updating token {}", authJson.getString("access_token"));
-                        } catch (Exception e) {
-                            LOG.error("Error resending login request ", e);
-                        }
-                    }
-                }, expireTime - 30, expireTime - 30, TimeUnit.SECONDS);
-            }
             return session;
         }
+    }
+
+    protected static String tokenInfo(JSONObject previous) {
+        return StringUtils.right(previous.getString("access_token"), 30);
     }
 
     /**
@@ -1127,7 +1230,7 @@ public class TrepWsIO {
      * response.
      */
     protected static JSONObject getAuthenticationInfo(JSONObject previousAuthResponseJson, String username,
-            String password, URI url) {
+            String password, URI url, boolean takeExclusiveSignOnControl) {
 
         try {
             SSLConnectionSocketFactory sslsf = new SSLConnectionSocketFactory(new SSLContextBuilder().build());
@@ -1139,7 +1242,10 @@ public class TrepWsIO {
             List<NameValuePair> params = new ArrayList<NameValuePair>(2);
             params.add(new BasicNameValuePair("client_id", username));
             params.add(new BasicNameValuePair("username", username));
-            params.add(new BasicNameValuePair("takeExclusiveSignOnControl", "true"));
+
+            // Note: If user credentials permit multiple concurrent sign-ons, this parameter
+            // invalidates the Refresh token for all previous sign-ons when it is set to true
+            params.add(new BasicNameValuePair("takeExclusiveSignOnControl", Boolean.toString(takeExclusiveSignOnControl)));
 
             if (previousAuthResponseJson == null) {
                 // First time through, send password.
@@ -1150,8 +1256,7 @@ public class TrepWsIO {
             } else {
                 // Use the refresh token we got from the last authentication response.
                 params.add(new BasicNameValuePair("grant_type", "refresh_token"));
-                params.add(
-                        new BasicNameValuePair("refresh_token", previousAuthResponseJson.getString("refresh_token")));
+                params.add(new BasicNameValuePair("refresh_token", previousAuthResponseJson.getString("refresh_token")));
                 LOG.info("Sending authentication request with refresh token to {}", url);
             }
 
@@ -1162,15 +1267,16 @@ public class TrepWsIO {
 
             if (response.getStatusLine().getStatusCode() != HttpStatus.SC_OK) {
                 // Authentication failed.
-                LOG.error("EDP-GW authentication failure: " + response.getStatusLine().getStatusCode() + " "
-                        + response.getStatusLine().getReasonPhrase());
-                LOG.error("Text: " + EntityUtils.toString(response.getEntity()));
+                LOG.error("EDP-GW authentication failure: {} {}",response.getStatusLine().getStatusCode(),
+                        response.getStatusLine().getReasonPhrase());
+                LOG.error("Text: {}", EntityUtils.toString(response.getEntity()));
 
                 if (response.getStatusLine().getStatusCode() == HttpStatus.SC_UNAUTHORIZED
                         && previousAuthResponseJson != null) {
                     // If we got a 401 response (unauthorised), our refresh token may have expired.
                     // Try again using our password.
-                    return getAuthenticationInfo(null, username, password, url);
+                    LOG.warn("401 response (unauthorised), our refresh token may have expired.");
+                    return getAuthenticationInfo(null, username, password, url, takeExclusiveSignOnControl);
                 }
 
                 return null;
@@ -1178,7 +1284,7 @@ public class TrepWsIO {
 
             // Authentication was successful. Deserialize the response and return it.
             JSONObject responseJson = new JSONObject(EntityUtils.toString(response.getEntity()));
-            LOG.info("EDP-GW Authentication succeeded. {}", responseJson.toString());
+            LOG.info("EDP-GW Authentication succeeded. {}", tokenInfo(responseJson));
             return responseJson;
 
         } catch (Exception e) {
@@ -1225,4 +1331,52 @@ public class TrepWsIO {
             return null;
         }
     }
+
+
+    /**
+     * Read contents of a file from cloud storage.
+     * @param resource (String)
+     * @return String
+     * @throws IOException
+     */
+    public static String readFile(String resource) throws IOException {
+        FileSystems.setDefaultPipelineOptions(PipelineOptionsFactory.create());
+        ResourceId existingFileResourceId = FileSystems.matchSingleFileSpec(resource).resourceId();
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream();
+                ReadableByteChannel readerChannel = FileSystems.open(existingFileResourceId);
+                WritableByteChannel writerChannel = Channels.newChannel(out)) {
+            ByteStreams.copy(readerChannel, writerChannel);
+            return out.toString();
+        }
+    }
+
+    /**
+     * Write string to a file in cloud storage.
+     * @param resource (String)
+     * @param contentToWrite
+     * @throws IOException
+     */
+    public static void writeFile(String resource, String contentToWrite) throws IOException {
+        FileSystems.setDefaultPipelineOptions(PipelineOptionsFactory.create());
+        ResourceId newFileResourceId = FileSystems.matchNewResource(resource, false);
+        try (ByteArrayInputStream in = new ByteArrayInputStream(contentToWrite.getBytes());
+                ReadableByteChannel readerChannel = Channels.newChannel(in);
+                WritableByteChannel writerChannel = FileSystems.create(newFileResourceId, MimeTypes.TEXT)) {
+            ByteStreams.copy(readerChannel, writerChannel);
+        }
+    }
+
+    /**
+     * Delete a file from cloud storage.
+     * @param resource (String)
+     * @throws IOException
+     */
+    public static void deleteFile(String resource) throws IOException {
+        FileSystems.setDefaultPipelineOptions(PipelineOptionsFactory.create());
+        ResourceId existingFileResourceId = FileSystems.matchSingleFileSpec(resource).resourceId();
+        FileSystems.delete(Collections.singletonList(existingFileResourceId),
+                MoveOptions.StandardMoveOptions.IGNORE_MISSING_FILES);
+        System.out.println(String.format("Deleting file %s", resource));
+    }
+
 }

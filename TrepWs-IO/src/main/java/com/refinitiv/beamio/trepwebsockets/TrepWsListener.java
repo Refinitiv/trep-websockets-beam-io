@@ -67,7 +67,7 @@ public class TrepWsListener extends Endpoint {
     private String authToken;
 
     private Deque<MarketPrice>   dispatchQueue;
-    private boolean ert_rt;
+    private boolean isErt;
 
     protected static HashMap<String, Long> instrumentList;
 
@@ -85,11 +85,11 @@ public class TrepWsListener extends Endpoint {
 	 * @param appId
 	 * @param position
 	 * @param authToken
-	 * @param ert_rt
+	 * @param isErt
 	 * @param reader
 	 */
     public TrepWsListener(Deque<MarketPrice> dispatchQueue, String server, String user, String appId,
-            String position, String authToken, boolean ert_rt, int reader) {
+            String position, String authToken, boolean isErt, int reader) {
         this.server = server;
         this.user = user;
         this.appId = appId;
@@ -97,7 +97,7 @@ public class TrepWsListener extends Endpoint {
         this.dispatchQueue = dispatchQueue;
         this.reader = reader;
         this.authToken = authToken;
-        this.ert_rt = ert_rt;
+        this.isErt = isErt;
 
         instrumentList = new HashMap<String, Long>();
 
@@ -115,7 +115,7 @@ public class TrepWsListener extends Endpoint {
 	 */
 	@Override
 	public void onOpen(Session session, EndpointConfig config) {
-		LOG.info("WebSocket successfully connected! from reader {}", reader);
+		LOG.info("WebSocket successfully connected on mount {} with session id {}", reader, session.getId());
 
 		session.addMessageHandler(new MessageHandler.Whole<String>() {
 
@@ -128,16 +128,16 @@ public class TrepWsListener extends Endpoint {
 				if (!message.isEmpty()) {
 					JSONArray jsonArray = new JSONArray(message);
 					for (int i = 0; i < jsonArray.length(); ++i) {
-						processMessage(session, jsonArray.getJSONObject(i), dispatchQueue);
+						processMessage(session, jsonArray.getJSONObject(i));
 					}
 				}
 			}
 		});
 
 		try {
-			sendLoginRequest(session, user, appId, position, authToken, true, ert_rt, reader);
+			sendLoginRequest(session, user, appId, position, authToken, true, isErt, reader);
 		} catch (IOException e) {
-			LOG.error("ERROR: Unable send login request with {} to {} from reader {}",
+			LOG.error("ERROR: Unable send login request with {} to {} on mount {}",
 			        new Object[] {user, session, reader});
 		}
 	}
@@ -160,25 +160,32 @@ public class TrepWsListener extends Endpoint {
 	@Override
 	public void onError(Session session, Throwable throwable) {
 
-        LOG.error("ERROR: websocket onError {} {} see https://tools.ietf.org/html/rfc6455", reader, throwable.getCause().toString());
+        LOG.error("ERROR: websocket onError on mount {} {} see https://tools.ietf.org/html/rfc6455", reader,
+                throwable.getCause().toString());
 
 		MarketPrice error = new MarketPrice(0L, ERROR, 0L, "", WS_ERROR, Instant.now())
 		        .withText(throwable.getCause().toString());
 		    dispatchQueue.add(error);
 	}
 
-	/**
-	 * Create and send a Login request
-	 * @param isFirstLogin
-	 * @param authToken
-	 * @param id 
-	 * @param ert_rt2
-	 */
+    /**
+     * Create and send a Login request
+     *
+     * @param websocket session
+     * @param user
+     * @param appId
+     * @param position
+     * @param authToken
+     * @param isFirstLogin
+     * @param isERT
+     * @param id
+     * @throws IOException
+     */
     public static void sendLoginRequest(Session websocket, String user, String appId, String position, String authToken,
-            boolean isFirstLogin, boolean ert, int id) throws IOException {
+            boolean isFirstLogin, boolean isERT, int id) throws IOException {
 
         Key key;
-        if (ert) {
+        if (isERT) {
             key = new Key()
             .withName(user)
             .withNameType("AuthnToken")
@@ -201,7 +208,6 @@ public class TrepWsListener extends Endpoint {
                 .withKey(key);
 
 		websocket.getBasicRemote().sendText(gson.toJson(login));
-		LOG.info("Sent login {} {}", gson.toJson(login));
 	}
 
 	/**
@@ -235,11 +241,10 @@ public class TrepWsListener extends Endpoint {
                     request = request.withView(tuple.getFields());
                 }
 
-                LOG.info("Sent request {} {}", reader, gson.toJson(request));
+                LOG.info("Sent request on mount {} {}", reader, gson.toJson(request));
                 session.getBasicRemote().sendText(gson.toJson(request));
                 records++;
                 instrumentList.put(nullToEmpty(tuple.getService()) + ":" + instrument, id.longValue());
-
             }
         }
         return records;
@@ -252,7 +257,7 @@ public class TrepWsListener extends Endpoint {
 	 * @param messageJson
 	 * @param queue
 	 */
-	private void processMessage(Session websocket, JSONObject messageJson, Deque<MarketPrice> queue) {
+	private void processMessage(Session websocket, JSONObject messageJson) {
 
 	    final String jsonString =  messageJson.toString();
 	    final String messageType = messageJson.getString(TYPE);
@@ -265,7 +270,7 @@ public class TrepWsListener extends Endpoint {
 		    try {
 		        websocket.getBasicRemote().sendText(PONG);
 		    } catch (Exception e) {
-		        LOG.error("Unable to send Pong message {}", reader);
+		        LOG.error("Unable to send Pong message to mount {}", reader);
 		    }
 		    break;
 
@@ -273,12 +278,12 @@ public class TrepWsListener extends Endpoint {
 		    if (messageJson.has(DOMAIN)) {
 		        String messageDomain = messageJson.getString(DOMAIN);
 		        if (messageDomain.equals(LOGIN)) {
-		            LOG.info("Login success {} {}", reader, messageJson.toString());
+		            LOG.info("Login success on mount {} {}", reader, messageJson.toString());
 		        }
 		    }
 
 		default:
-		    queue.add(mpMessage);
+		    dispatchQueue.add(mpMessage);
 		    break;
 		}
 	}

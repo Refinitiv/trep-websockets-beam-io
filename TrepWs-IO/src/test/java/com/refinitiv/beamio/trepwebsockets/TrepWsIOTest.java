@@ -94,7 +94,7 @@ public class TrepWsIOTest {
         int desiredNumSplits = 12;
         AtomicReference<String> ref = new AtomicReference<String>();
         ref.set("hello");
-        TrepWsIO.UnboundedTrepWsSource initialSource = new TrepWsIO.UnboundedTrepWsSource(read,1);
+        TrepWsIO.UnboundedTrepWsSource initialSource = new TrepWsIO.UnboundedTrepWsSource(read, 1);
         List<TrepWsIO.UnboundedTrepWsSource> splits = initialSource.split(desiredNumSplits, pipelineOptions);
 
         assertEquals(6, splits.size());

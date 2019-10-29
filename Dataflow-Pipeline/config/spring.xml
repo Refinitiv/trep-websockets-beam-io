@@ -77,6 +77,7 @@
                 <entry key="Time"       value="TIMESTAMP" />
                 <entry key="Type"       value="STRING" />
                 <entry key="UpdateType" value="STRING" />
+                <entry key="SeqNumber"  value="INTEGER" />
                 <!-- As per fieldList -->
                 <entry key="PROD_PERM"  value="STRING" />
                 <entry key="DSPLY_NAME" value="STRING" />

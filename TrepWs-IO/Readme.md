@@ -60,6 +60,9 @@ For example:
        .withServiceDiscovery(true)
        .withRegion("eu")
 
+       // Token store location used to support multiple ERT mounts. This can be the Dataflow Temp location.
+       .withTokenStore("gs://gcs-token-store")
+
        .withInstrumentTuples(Lists.newArrayList(instrument1, instrument2))
 
        // Rest of the settings are optional:
@@ -86,10 +89,10 @@ For example:
        .withTimeout(60000)
 
        // For ERT to override the defaults for authentication server/port/path and discovery path
-      .setAuthServer("api.edp.thomsonreuters.com")
-      .setAuthPort(443)
-      .setTokenAuthPath("/auth/oauth2/beta1/token")
-      .setDiscoveryPath("/streaming/pricing/v1/")
+      .withAuthServer("api.edp.thomsonreuters.com")
+      .withAuthPort(443)
+      .withTokenAuthPath("/auth/oauth2/beta1/token")
+      .withDiscoveryPath("/streaming/pricing/v1/")
 
       );
 
