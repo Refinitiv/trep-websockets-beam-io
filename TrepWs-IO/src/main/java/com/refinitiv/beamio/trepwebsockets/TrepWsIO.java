@@ -1012,8 +1012,8 @@ public class TrepWsIO {
                     messages.inc();
 
                     // Uncomment for testing only!
-                    LOG.info(String.format("Mount:%d %s %s", id, ((MarketPriceMessage) currentMessage).getName(),
-                            ((MarketPriceMessage) currentMessage).getFields()));
+                    /*LOG.info(String.format("Mount:%d %s %s", id, ((MarketPriceMessage) currentMessage).getName(),
+                            ((MarketPriceMessage) currentMessage).getFields()));*/
                     return true;
                 }
 
