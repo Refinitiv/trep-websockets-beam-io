@@ -17,11 +17,14 @@ package com.refinitiv.beamio.trepws.dataflow;
 
 import static com.refinitiv.beamio.trepwebsockets.TrepWsIO.InstrumentTuple;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
@@ -94,6 +97,9 @@ public class PipelineBean {
 		options.setJobName(getJobName());
 		logger.info(String.format("runPipeline %s %s...", options.getAppName(), options.getJobName()));
 		logger.info(this.toString());
+
+        options.setFilesToStage(Arrays.asList(System.getProperty("java.class.path").split(File.pathSeparator)).stream()
+                .map(entry -> new File(entry).toString()).collect(Collectors.toList()));
 
         List<String> rics = Lists.newArrayList();
 
@@ -185,7 +191,7 @@ public class PipelineBean {
 
         // The options.setUpdate(true) seems to create two pipelines. This can cause
         // problems with multiple tokens being created and stored when using ERT.
-        // Therefore please cancel the running pipeline and start a new one.
+        // Therefore, please cancel the running pipeline and start a new one.
 		options.setUpdate(false);
 		pipeline.run(options);
 
