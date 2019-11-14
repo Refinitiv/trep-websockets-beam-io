@@ -14,15 +14,14 @@
     <context:component-scan base-package="com.refinitiv.beamio.trepws.dataflow" />
 
     <bean name="streaming-options" factory-method="initStreaming" class="com.refinitiv.beamio.trepws.dataflow.Options">
-        <property name="project"             value="tr-solutions-playground" />
+        <property name="project"             value="YOUR GCP PROJECT NAME" />
         <property name="AppName"             value="StreamingPipeline"/>
-        <property name="zone"                value="europe-west1-b" />
-        <property name="region"              value="europe-west1"/>
-        <property name="location"            value="EU" />
+        <property name="zone"                value="YOUR PREFFERED GCP ZONE" />
+        <property name="region"              value="YOUR PREFFERED GCP REGION" />
+        <property name="location"            value="YOUR PREFFERED GCP LOCATION" />
         <property name="numWorkers"          value="1" />
         <property name="maxNumWorkers"       value="1" />
-        <property name="stagingLocation"     value="gs://tr-solutions-playground-tickhistory/staging/" />
-        <property name="tempLocation"        value="gs://tr-solutions-playground-tickhistory/temp/" />
+        <property name="tempLocation"        value="YOUR GOOGLE STORAGE (gs://bucket/path)" />
         <!-- single CPU, 3.75 GB mem -->
         <property name="workerMachineType"   value="n1-standard-1" />
         <property name="diskSizeGb"          value="20" />
@@ -36,23 +35,21 @@
         <!-- You'll probably have to set a unique position too -->
         <property name="jobName"     value="trep-websocket-io" />
 
-        <property name="hostname"    value="amer-3.pricing.streaming.edp.thomsonreuters.com" />  <!-- 10.132.0.66 -->
-        <property name="port"        value="443" /> <!-- 5900 -->
+        <property name="hostname"    value="YOUR TREP/ADS/ERT hostname or IP address" />
+        <property name="port"        value="15000" />
 
        <!-- For ERT -->
-        <property name="tokenAuth"           value="true" />
-        <property name="password"            value="***REMOVED***" /><!-- YOUR ERT-GW-Password -->
+        <property name="tokenAuth"           value="false" />
+        <property name="password"            value="YOUR ERT-GW-Password" />
         <property name="serviceDiscovery"    value="true" />
         <property name="region"              value="eu" /> <!-- eu or us -->
 
         <!-- The maximum number of ADS mounts (overridden if the number of  -->
         <!-- desired splits is smaller). If unset then 1 is used -->
         <!-- NOTE: for ERT maxMounts is forced to 1 to avoid clashes then performing token authentication. -->
-        <property name="maxMounts"         value="5" />
+        <property name="maxMounts"   value="1" />
 
-        <!-- <property name="trepIoInstances"   value="3" /> -->
-
-        <property name="username"    value="***REMOVED***" />
+        <property name="username"    value="YOUR TREP/DACS id/ERT username" />
         <property name="timeout"     value="60000" />
 
         <!-- can default to 256 if property removed -->
@@ -68,7 +65,7 @@
 
         <!-- Table is create if needed and append. Removing this property will not add a BigQuery write step to the pipeline -->
         <!-- DATASET must exit! -->
-        <property name="bigQuery" value="tr-solutions-playground:TEST.tickdb" />
+        <property name="bigQuery" value="YOUR GCP PROJECT NAME:DATASET.TABLE" />
 
          <!-- Time partitioning field -->
         <property name="partition"      value="Time" />
@@ -125,22 +122,13 @@
         <property name="ricList">
             <list>
                 <value>GBP=</value>
-                <value>EUR=</value>
-                <value>JPY=</value>
-                <value>NOK=</value>
-                <value>.FTSE</value>
-                <value>LCOc1</value>
-                <value>LCOc2</value>
-                <value>LCOc3</value>
-                <value>LCOc4</value>
-                <value>LCOc5</value>
-                <value>LCOc6</value>
-                <value>LCOc7</value>
+                <value>.TRXVUSGOV10U</value>
+                <value>GB50YT=RR</value>
             </list>
         </property>
 
         <!--  note if the above ricList is empty, use the following query to retrieve a list of RICs -->
-        <!-- <property name="ricListQuery" value="YOUR GCP PROJECT VIEW to return a list of RICs"/> -->
+        <property name="ricListQuery" value="YOUR GCP PROJECT VIEW to return a list of RICs"/>
 
     </bean>
 
