@@ -7,13 +7,13 @@
     <parent>
         <groupId>com.refinitiv.beamio</groupId>
         <artifactId>Trep-Websocket-IO</artifactId>
-        <version>1.2.0</version>
+        <version>1.2.1</version>
     </parent>
 
     <artifactId>trepws-pipeline</artifactId>
 
     <properties>
-        <beam.version>2.12.0</beam.version>
+        <beam.version>2.16.0</beam.version>
         <trepio.version>1.2.0</trepio.version>
         <spring.version>5.1.6.RELEASE</spring.version>
         <spring.boot.version>2.1.4.RELEASE</spring.boot.version>
@@ -230,7 +230,7 @@
 
             <plugin>
                 <artifactId>maven-assembly-plugin</artifactId>
-                <version>2.3</version>
+                <version>2.3</version><!--$NO-MVN-MAN-VER$-->
                 <configuration>
                     <appendAssemblyId>false</appendAssemblyId>
                     <finalName>${project.name}_${project.version}
